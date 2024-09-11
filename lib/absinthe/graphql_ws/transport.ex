@@ -119,7 +119,6 @@ defmodule Absinthe.GraphqlWS.Transport do
   end
 
   def handle_info({:complete, id}, socket) do
-
     metadata = %{
       platform: get_platform(socket),
       session_id: get_session_id(socket),
