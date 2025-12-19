@@ -100,6 +100,33 @@ defmodule Absinthe.GraphqlWS.Transport do
     {:push, {:ping, @ping}, socket}
   end
 
+  def handle_info(:gc, socket) do
+    start_time = System.monotonic_time()
+    before_info = Process.info(self())
+
+    start_measurements = %{system_time: System.system_time()}
+    start_metadata = %{process_info: Map.new(before_info)}
+    :telemetry.execute([:absinthe_graphql_ws, :gc, :start], start_measurements, start_metadata)
+
+    :erlang.garbage_collect()
+
+    duration = System.monotonic_time() - start_time
+    after_info = Process.info(self())
+
+    stop_measurements = %{duration: duration}
+
+    stop_metadata = %{
+      before: Map.new(before_info),
+      after: Map.new(after_info)
+    }
+
+    :telemetry.execute([:absinthe_graphql_ws, :gc, :stop], stop_measurements, stop_metadata)
+
+    Process.send_after(self(), :gc, socket.gc_interval)
+
+    {:ok, socket}
+  end
+
   def handle_info(%Broadcast{event: "subscription:data", payload: payload, topic: topic}, socket) do
     subscription_id = socket.subscriptions[topic]
     message = Message.Next.new(subscription_id, payload.result)
