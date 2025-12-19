@@ -75,6 +75,10 @@ defmodule Absinthe.GraphqlWS.Transport do
     library has a strong opinion that it does not want to implement client-side keepalive, so
     in order to keep the websocket from closing we need to send it messages.
 
+  * `:gc` - Periodically trigger garbage collection on the socket process when `gc_interval` is
+    configured. Emits telemetry events `[:absinthe_graphql_ws, :gc, :start]` and
+    `[:absinthe_graphql_ws, :gc, :stop]` with process info before and after GC in the metadata.
+
   * `subscription:data` - After we subscribe to an Absinthe subscription, we may receive messages
     for the relevant subscription. The `graphql-ws` will have sent us an `id` along with the
     subscription query, so we need to map our internal topic back to that `id` in order for the
@@ -101,26 +105,14 @@ defmodule Absinthe.GraphqlWS.Transport do
   end
 
   def handle_info(:gc, socket) do
-    start_time = System.monotonic_time()
-    before_info = Process.info(self())
+    before_info = Process.info(self()) |> Map.new()
 
-    start_measurements = %{system_time: System.system_time()}
-    start_metadata = %{process_info: Map.new(before_info)}
-    :telemetry.execute([:absinthe_graphql_ws, :gc, :start], start_measurements, start_metadata)
+    :telemetry.span([:absinthe_graphql_ws, :gc], %{before: before_info}, fn ->
+      :erlang.garbage_collect()
+      after_info = Process.info(self()) |> Map.new()
 
-    :erlang.garbage_collect()
-
-    duration = System.monotonic_time() - start_time
-    after_info = Process.info(self())
-
-    stop_measurements = %{duration: duration}
-
-    stop_metadata = %{
-      before: Map.new(before_info),
-      after: Map.new(after_info)
-    }
-
-    :telemetry.execute([:absinthe_graphql_ws, :gc, :stop], stop_measurements, stop_metadata)
+      {:ok, %{before: before_info, after: after_info}}
+    end)
 
     Process.send_after(self(), :gc, socket.gc_interval)
 
