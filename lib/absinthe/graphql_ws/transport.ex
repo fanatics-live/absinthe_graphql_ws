@@ -114,7 +114,7 @@ defmodule Absinthe.GraphqlWS.Transport do
       {:ok, %{before: before_info, after: after_info}}
     end)
 
-    Process.send_after(self(), :gc, socket.gc_interval)
+    maybe_schedule_gc(socket)
 
     {:ok, socket}
   end
@@ -182,13 +182,17 @@ defmodule Absinthe.GraphqlWS.Transport do
     if function_exported?(handler, :handle_init, 2) do
       case handler.handle_init(Map.get(message, "payload", %{}), socket) do
         {:ok, payload, socket} ->
-          {:reply, :ok, {:text, Message.ConnectionAck.new(payload)}, %{socket | initialized?: true}}
+          socket = %{socket | initialized?: true}
+          maybe_schedule_gc(socket)
+          {:reply, :ok, {:text, Message.ConnectionAck.new(payload)}, socket}
 
         {:error, payload, socket} ->
           {:reply, :ok, {:text, Message.Error.new(payload)}, socket}
       end
     else
-      {:reply, :ok, {:text, Message.ConnectionAck.new()}, %{socket | initialized?: true}}
+      socket = %{socket | initialized?: true}
+      maybe_schedule_gc(socket)
+      {:reply, :ok, {:text, Message.ConnectionAck.new()}, socket}
     end
   end
 
@@ -276,6 +280,12 @@ defmodule Absinthe.GraphqlWS.Transport do
   defp close(code, message, socket) do
     {:reply, :ok, {:close, code, message}, socket}
   end
+
+  defp maybe_schedule_gc(%{assigns: %{gc_interval: gc_interval}}) when is_integer(gc_interval) and gc_interval > 0 do
+    Process.send_after(self(), :gc, gc_interval)
+  end
+
+  defp maybe_schedule_gc(_socket), do: :ok
 
   defp parse_query(%{"query" => query}) when is_binary(query), do: {:ok, query}
   defp parse_query(_), do: {:ok, ""}
