@@ -120,7 +120,7 @@ defmodule Absinthe.GraphqlWS.Transport do
   end
 
   def handle_info(%Broadcast{event: "subscription:data", payload: payload, topic: topic}, socket) do
-    subscription_id = socket.subscriptions[topic]
+    {subscription_id, operation_name} = subscription_info(socket.subscriptions, topic)
     message = Message.Next.new(subscription_id, payload.result)
     measurements = %{payload_size: byte_size(message)}
 
@@ -129,7 +129,8 @@ defmodule Absinthe.GraphqlWS.Transport do
       session_id: get_session_id(socket),
       client_app_version: get_client_app_version(socket),
       user_id: get_user_id(socket),
-      payload: payload
+      payload: payload,
+      operation_name: operation_name
     }
 
     :telemetry.execute([:absinthe_graphql_ws, :handle_info, :broadcast], measurements, metadata)
@@ -217,6 +218,9 @@ defmodule Absinthe.GraphqlWS.Transport do
   def handle_inbound(%{"id" => id, "type" => "complete"}, socket) do
     socket.subscriptions
     |> Enum.find_value(fn
+      {topic, %{id: ^id}} ->
+        {:ok, topic}
+
       {topic, ^id} ->
         {:ok, topic}
 
@@ -261,7 +265,12 @@ defmodule Absinthe.GraphqlWS.Transport do
     with %{schema: schema} <- socket.absinthe,
          {:ok, variables} <- parse_variables(payload),
          {:ok, query} <- parse_query(payload) do
-      opts = socket.absinthe.opts |> Keyword.merge(variables: variables)
+      operation_name = parse_operation_name(payload)
+
+      opts =
+        socket.absinthe.opts
+        |> Keyword.merge(variables: variables)
+        |> maybe_put_operation_name(operation_name)
 
       Absinthe.Logger.log_run(:debug, {
         query,
@@ -270,7 +279,7 @@ defmodule Absinthe.GraphqlWS.Transport do
         opts
       })
 
-      run_doc(socket, id, query, socket.absinthe, opts)
+      run_doc(socket, id, query, socket.absinthe, opts, operation_name)
     else
       _ ->
         {:ok, socket}
@@ -293,12 +302,18 @@ defmodule Absinthe.GraphqlWS.Transport do
   defp parse_variables(%{"variables" => variables}) when is_map(variables), do: {:ok, variables}
   defp parse_variables(_), do: {:ok, %{}}
 
+  defp parse_operation_name(%{"operationName" => name}) when is_binary(name) and name != "" do
+    name
+  end
+
+  defp parse_operation_name(_), do: nil
+
   def pipeline(schema, options) do
     schema
     |> Absinthe.Pipeline.for_document(options)
   end
 
-  defp run_doc(socket, id, query, config, opts) do
+  defp run_doc(socket, id, query, config, opts, operation_name) do
     case run(query, config[:schema], config[:pipeline], opts) do
       {:ok, %{"subscribed" => topic}, context} ->
         debug("subscribed to topic #{topic}")
@@ -312,7 +327,13 @@ defmodule Absinthe.GraphqlWS.Transport do
           )
 
         socket = merge_opts(socket, context: context)
-        {:ok, %{socket | subscriptions: Map.put(socket.subscriptions, topic, id)}}
+
+        subscription = %{
+          id: id,
+          operation_name: operation_name
+        }
+
+        {:ok, %{socket | subscriptions: Map.put(socket.subscriptions, topic, subscription)}}
 
       {:ok, %{data: _} = reply, context} ->
         queue_complete_message(id)
@@ -342,6 +363,16 @@ defmodule Absinthe.GraphqlWS.Transport do
 
   defp merge_opts(socket, opts) do
     %{socket | absinthe: %{socket.absinthe | opts: opts}}
+  end
+
+  defp maybe_put_operation_name(opts, nil), do: opts
+  defp maybe_put_operation_name(opts, name), do: Keyword.put(opts, :operation_name, name)
+
+  defp subscription_info(subscriptions, topic) do
+    case Map.get(subscriptions, topic) do
+      %{id: id, operation_name: operation_name} -> {id, operation_name}
+      id -> {id, nil}
+    end
   end
 
   defp queue_complete_message(id), do: send(self(), {:complete, id})
