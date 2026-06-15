@@ -1,6 +1,18 @@
 defmodule Absinthe.GraphqlWS.SocketTest do
   use ExUnit.Case
 
+  alias Test.Site.Endpoint
+
+  @subscription_subscribe_event [:absinthe_graphql_ws, :subscription, :subscribe]
+  @subscription_unsubscribe_event [:absinthe_graphql_ws, :subscription, :unsubscribe]
+  @subscription_unsubscribe_duration_stop_event [
+    :absinthe_graphql_ws,
+    :subscription,
+    :unsubscribe,
+    :duration,
+    :stop
+  ]
+
   defp setup_client(_context) do
     assert {:ok, client} = Test.Client.start()
     on_exit(fn -> Test.Client.close(client) end)
@@ -34,6 +46,25 @@ defmodule Absinthe.GraphqlWS.SocketTest do
   defp assert_json_received(client, payload) do
     assert {:ok, [{:text, json}]} = Test.Client.get_new_replies(client)
     assert json == Jason.encode!(payload)
+  end
+
+  defp attach_telemetry(test, event_name) do
+    handler_id = {__MODULE__, test, event_name}
+    test_pid = self()
+
+    :ok =
+      :telemetry.attach(
+        handler_id,
+        event_name,
+        fn event, measurements, metadata, _config ->
+          send(test_pid, {:telemetry_event, event, measurements, metadata})
+        end,
+        nil
+      )
+
+    on_exit(fn ->
+      :telemetry.detach(handler_id)
+    end)
   end
 
   describe "initalization" do
@@ -188,6 +219,45 @@ defmodule Absinthe.GraphqlWS.SocketTest do
   describe "on Subscribe with a subscription" do
     setup [:setup_client, :send_connection_init]
 
+    test "emits telemetry when a subscription is accepted", %{client: client, test: test} do
+      attach_telemetry(test, @subscription_subscribe_event)
+
+      id = "subscription"
+
+      :ok =
+        Test.Client.push(client, %{
+          id: id,
+          type: "subscribe",
+          payload: %{
+            query: """
+            subscription ThingChanges($id: Int!) {
+              thing_changes(id: $id) {
+                id
+                name
+              }
+            }
+            """,
+            variables: %{id: 2}
+          }
+        })
+
+      assert_receive {:telemetry_event, @subscription_subscribe_event,
+                      %{field_key_count: 1, socket_subscription_count: 1},
+                      %{
+                        operation_name: nil,
+                        platform: "unknown",
+                        route: "/graphql",
+                        subscription_field: :thing_changes,
+                        subscription_fields: [:thing_changes]
+                      } = metadata}
+
+      refute Map.has_key?(metadata, :topic)
+      refute Map.has_key?(metadata, :query)
+      refute Map.has_key?(metadata, :variables)
+      refute Map.has_key?(metadata, :user_id)
+      refute Map.has_key?(metadata, :socket_id)
+    end
+
     test "pushes Next messages for the subscription topic, as they are published", %{client: client} do
       id = "subscription"
 
@@ -210,7 +280,7 @@ defmodule Absinthe.GraphqlWS.SocketTest do
 
       assert {:ok, []} = Test.Client.get_new_replies(client)
 
-      Absinthe.Subscription.publish(Test.Site.Endpoint, %{name: "blue"}, thing_changes: "2")
+      Absinthe.Subscription.publish(Endpoint, %{name: "blue"}, thing_changes: "2")
 
       assert_json_received(client, %{
         "payload" => %{
@@ -220,12 +290,15 @@ defmodule Absinthe.GraphqlWS.SocketTest do
         "id" => id
       })
 
-      Absinthe.Subscription.publish(Test.Site.Endpoint, %{name: "fun"}, thing_changes: "1")
+      Absinthe.Subscription.publish(Endpoint, %{name: "fun"}, thing_changes: "1")
 
       assert {:ok, []} = Test.Client.get_new_replies(client)
     end
 
-    test "stops a subscription when client sends a Complete", %{client: client} do
+    test "stops a subscription when client sends a Complete", %{client: client, test: test} do
+      attach_telemetry(test, @subscription_unsubscribe_event)
+      attach_telemetry({test, :unsubscribe_stop}, @subscription_unsubscribe_duration_stop_event)
+
       id = "subscription-to-be-cancelled"
 
       :ok =
@@ -246,7 +319,7 @@ defmodule Absinthe.GraphqlWS.SocketTest do
         })
 
       assert {:ok, []} = Test.Client.get_new_replies(client)
-      Absinthe.Subscription.publish(Test.Site.Endpoint, %{name: "blue"}, thing_changes: "2")
+      Absinthe.Subscription.publish(Endpoint, %{name: "blue"}, thing_changes: "2")
 
       assert_json_received(client, %{
         "payload" => %{
@@ -259,11 +332,70 @@ defmodule Absinthe.GraphqlWS.SocketTest do
       :ok = Test.Client.push(client, %{id: id, type: "complete"})
       assert {:ok, []} = Test.Client.get_new_replies(client)
 
-      Absinthe.Subscription.publish(Test.Site.Endpoint, %{name: "true"}, thing_changes: "2")
+      assert_receive {:telemetry_event, @subscription_unsubscribe_event,
+                      %{field_key_count: 1, socket_subscription_count: 1},
+                      %{
+                        operation_name: nil,
+                        platform: "unknown",
+                        reason: :client_complete,
+                        route: "/graphql",
+                        subscription_field: :thing_changes,
+                        subscription_fields: [:thing_changes]
+                      }}
+
+      assert_receive {:telemetry_event, @subscription_unsubscribe_duration_stop_event, %{duration: duration},
+                      %{after_memory: after_memory, after_message_queue_len: after_message_queue_len}}
+
+      assert is_integer(duration)
+      assert is_integer(after_memory)
+      assert is_integer(after_message_queue_len)
+
+      Absinthe.Subscription.publish(Endpoint, %{name: "true"}, thing_changes: "2")
       assert {:ok, []} = Test.Client.get_new_replies(client)
     end
 
-    test "correct error payload for subscription failure", %{client: client} do
+    test "emits unsubscribe telemetry for active subscriptions when socket terminates" do
+      assert {:ok, client} = Test.Client.start()
+      send_connection_init(%{client: client})
+      attach_telemetry(:terminate_cleanup, @subscription_unsubscribe_event)
+
+      id = "subscription-cleanup"
+
+      :ok =
+        Test.Client.push(client, %{
+          id: id,
+          type: "subscribe",
+          payload: %{
+            query: """
+            subscription ThingChanges($id: Int!) {
+              thing_changes(id: $id) {
+                id
+                name
+              }
+            }
+            """,
+            variables: %{id: 2}
+          }
+        })
+
+      assert {:ok, []} = Test.Client.get_new_replies(client)
+      Test.Client.close(client)
+
+      assert_receive {:telemetry_event, @subscription_unsubscribe_event,
+                      %{field_key_count: 1, socket_subscription_count: 1},
+                      %{
+                        operation_name: nil,
+                        platform: "unknown",
+                        reason: :socket_terminate,
+                        route: "/graphql",
+                        subscription_field: :thing_changes,
+                        subscription_fields: [:thing_changes]
+                      }}
+    end
+
+    test "correct error payload for subscription failure", %{client: client, test: test} do
+      attach_telemetry(test, @subscription_subscribe_event)
+
       id = "subscription-with-error"
 
       :ok =
@@ -290,6 +422,8 @@ defmodule Absinthe.GraphqlWS.SocketTest do
           "type" => "error"
         }
       )
+
+      refute_receive {:telemetry_event, @subscription_subscribe_event, _, _}
     end
   end
 

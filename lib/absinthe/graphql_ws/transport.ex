@@ -11,12 +11,18 @@ defmodule Absinthe.GraphqlWS.Transport do
   their codebase, but is documented to help understand the intentions of the code.
   """
 
-  alias Absinthe.GraphqlWS.{Message, Socket, Util}
+  alias Absinthe.GraphqlWS.Message
+  alias Absinthe.GraphqlWS.Socket
+  alias Absinthe.GraphqlWS.Util
   alias Phoenix.Socket.Broadcast
+
   require Logger
 
   @ping "ping"
   @pong "pong"
+  @subscription_subscribe_event [:absinthe_graphql_ws, :subscription, :subscribe]
+  @subscription_unsubscribe_event [:absinthe_graphql_ws, :subscription, :unsubscribe]
+  @subscription_unsubscribe_duration_event [:absinthe_graphql_ws, :subscription, :unsubscribe, :duration]
 
   @type control :: Socket.control()
   @type reply_inbound() :: Socket.reply_inbound()
@@ -57,7 +63,8 @@ defmodule Absinthe.GraphqlWS.Transport do
   """
   @spec handle_in({binary(), [opcode: :text]}, socket()) :: reply_inbound()
   def handle_in({text, [opcode: :text]}, socket) do
-    Util.json_library().decode(text)
+    text
+    |> Util.json_library().decode()
     |> case do
       {:ok, json} ->
         handle_inbound(json, socket)
@@ -105,11 +112,11 @@ defmodule Absinthe.GraphqlWS.Transport do
   end
 
   def handle_info(:gc, socket) do
-    before_info = Process.info(self()) |> Map.new()
+    before_info = self() |> Process.info() |> Map.new()
 
     :telemetry.span([:absinthe_graphql_ws, :gc], %{before: before_info}, fn ->
       :erlang.garbage_collect()
-      after_info = Process.info(self()) |> Map.new()
+      after_info = self() |> Process.info() |> Map.new()
 
       {:ok, %{before: before_info, after: after_info}}
     end)
@@ -154,7 +161,14 @@ defmodule Absinthe.GraphqlWS.Transport do
   Process was stopped.
   """
   @spec terminate(term(), socket()) :: :ok
-  def terminate(reason, _socket) do
+  def terminate(reason, socket) do
+    Enum.each(socket.subscriptions, fn {topic, subscription} ->
+      emit_subscription_unsubscribe(topic, socket, subscription, :socket_terminate, %{
+        field_key_count: field_key_count(topic, socket),
+        socket_subscription_count: map_size(socket.subscriptions)
+      })
+    end)
+
     debug("terminated: #{inspect(reason)}")
     :ok
   end
@@ -211,8 +225,7 @@ defmodule Absinthe.GraphqlWS.Transport do
   end
 
   def handle_inbound(%{"id" => id, "type" => "subscribe", "payload" => payload}, socket) do
-    payload
-    |> handle_subscribe(id, socket)
+    handle_subscribe(payload, id, socket)
   end
 
   def handle_inbound(%{"id" => id, "type" => "complete"}, socket) do
@@ -230,8 +243,27 @@ defmodule Absinthe.GraphqlWS.Transport do
     |> case do
       {:ok, topic} ->
         debug("unsubscribing from topic #{topic}")
-        Phoenix.PubSub.unsubscribe(socket.pubsub, topic)
-        Absinthe.Subscription.unsubscribe(socket.endpoint, topic)
+        subscription = Map.fetch!(socket.subscriptions, topic)
+        field_key_count = field_key_count(topic, socket)
+        socket_subscription_count = map_size(socket.subscriptions)
+        unsubscribe_metadata = subscription_metadata(topic, socket, subscription, :client_complete)
+
+        unsubscribe_start_metadata =
+          Map.merge(unsubscribe_metadata, process_stats(:before))
+
+        :telemetry.span(@subscription_unsubscribe_duration_event, unsubscribe_start_metadata, fn ->
+          Phoenix.PubSub.unsubscribe(socket.pubsub, topic)
+          Absinthe.Subscription.unsubscribe(socket.endpoint, topic)
+
+          measurements = %{
+            field_key_count: field_key_count,
+            socket_subscription_count: socket_subscription_count
+          }
+
+          emit_subscription_unsubscribe(measurements, unsubscribe_metadata)
+
+          {:ok, Map.merge(unsubscribe_metadata, process_stats(:after))}
+        end)
 
         {:ok, %{socket | subscriptions: Map.delete(socket.subscriptions, topic)}}
 
@@ -269,7 +301,7 @@ defmodule Absinthe.GraphqlWS.Transport do
 
       opts =
         socket.absinthe.opts
-        |> Keyword.merge(variables: variables)
+        |> Keyword.put(:variables, variables)
         |> maybe_put_operation_name(operation_name)
 
       Absinthe.Logger.log_run(:debug, {
@@ -309,8 +341,7 @@ defmodule Absinthe.GraphqlWS.Transport do
   defp parse_operation_name(_), do: nil
 
   def pipeline(schema, options) do
-    schema
-    |> Absinthe.Pipeline.for_document(options)
+    Absinthe.Pipeline.for_document(schema, options)
   end
 
   defp run_doc(socket, id, query, config, opts, operation_name) do
@@ -332,6 +363,17 @@ defmodule Absinthe.GraphqlWS.Transport do
           id: id,
           operation_name: operation_name
         }
+
+        measurements = %{
+          field_key_count: field_key_count(topic, socket),
+          socket_subscription_count: map_size(socket.subscriptions) + 1
+        }
+
+        :telemetry.execute(
+          @subscription_subscribe_event,
+          measurements,
+          subscription_metadata(topic, socket, subscription)
+        )
 
         {:ok, %{socket | subscriptions: Map.put(socket.subscriptions, topic, subscription)}}
 
@@ -375,9 +417,99 @@ defmodule Absinthe.GraphqlWS.Transport do
     end
   end
 
+  defp emit_subscription_unsubscribe(topic, socket, subscription, reason, measurements) do
+    emit_subscription_unsubscribe(measurements, subscription_metadata(topic, socket, subscription, reason))
+  end
+
+  defp emit_subscription_unsubscribe(measurements, metadata) do
+    :telemetry.execute(
+      @subscription_unsubscribe_event,
+      measurements,
+      metadata
+    )
+  end
+
+  defp subscription_metadata(topic, socket, subscription, reason \\ nil) do
+    metadata = %{
+      operation_name: operation_name(subscription),
+      platform: get_platform(socket),
+      route: get_route(socket),
+      subscription_field: subscription_field(topic, socket),
+      subscription_fields: subscription_fields(topic, socket)
+    }
+
+    if is_nil(reason), do: metadata, else: Map.put(metadata, :reason, reason)
+  end
+
+  defp subscription_fields(topic, socket) do
+    topic
+    |> field_keys(socket)
+    |> Enum.map(&field_key_name/1)
+    |> Enum.reject(&is_nil/1)
+    |> Enum.uniq()
+  end
+
+  defp subscription_field(topic, socket) do
+    case subscription_fields(topic, socket) do
+      [field] -> field
+      [] -> :unknown
+      _ -> :multiple
+    end
+  end
+
+  defp field_key_count(topic, socket), do: topic |> field_keys(socket) |> length()
+
+  defp field_keys(topic, socket) do
+    case Process.get({Absinthe.Subscription, topic}, []) do
+      [] -> registry_field_keys(socket.endpoint, topic)
+      field_keys -> field_keys
+    end
+  end
+
+  defp registry_field_keys(endpoint, topic) do
+    registry = Absinthe.Subscription.registry_name(endpoint)
+    self = self()
+
+    for {^self, field_key} <- Registry.lookup(registry, {self, topic}) do
+      field_key
+    end
+  rescue
+    _ -> []
+  end
+
+  defp field_key_name({field, _topic}) when is_atom(field), do: field
+  defp field_key_name(_field_key), do: nil
+
+  defp operation_name(%{operation_name: operation_name}) when is_binary(operation_name) and operation_name != "" do
+    operation_name
+  end
+
+  defp operation_name(_subscription), do: nil
+
+  defp process_stats(prefix) do
+    self()
+    |> Process.info([:memory, :message_queue_len])
+    |> Map.new()
+    |> Map.new(fn {key, value} -> {:"#{prefix}_#{key}", value} end)
+  end
+
   defp queue_complete_message(id), do: send(self(), {:complete, id})
 
   defp get_platform(socket), do: socket.assigns[:platform] || "unknown"
+
+  defp get_route(%{connect_info: %{uri: %URI{path: path}}}) when is_binary(path), do: path
+
+  defp get_route(%{connect_info: %{uri: uri}}) when is_binary(uri) do
+    uri
+    |> URI.parse()
+    |> Map.get(:path)
+    |> case do
+      path when is_binary(path) and path != "" -> path
+      _ -> "unknown"
+    end
+  end
+
+  defp get_route(_socket), do: "unknown"
 
   defp get_session_id(socket), do: socket.assigns[:session_id]
 
