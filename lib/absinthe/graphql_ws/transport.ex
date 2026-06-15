@@ -231,8 +231,7 @@ defmodule Absinthe.GraphqlWS.Transport do
     |> case do
       {:ok, topic, operation_name} ->
         debug("unsubscribing from topic #{topic}")
-        unsubscribe_topic(socket, topic)
-        emit_complete_success(socket, id, operation_name)
+        unsubscribe_topic_with_telemetry(socket, topic, id, operation_name)
 
         {:ok, %{socket | subscriptions: Map.delete(socket.subscriptions, topic)}}
 
@@ -312,10 +311,6 @@ defmodule Absinthe.GraphqlWS.Transport do
     emit_operation_telemetry([:absinthe_graphql_ws, :handle_inbound, :subscribe], socket, id, operation_name)
   end
 
-  defp emit_complete_success(socket, id, operation_name) do
-    emit_operation_telemetry([:absinthe_graphql_ws, :handle_inbound, :complete], socket, id, operation_name)
-  end
-
   defp emit_terminate_telemetry(socket, reason) do
     subscriptions =
       Enum.map(socket.subscriptions, fn {topic, _} ->
@@ -339,22 +334,98 @@ defmodule Absinthe.GraphqlWS.Transport do
 
   defp emit_operation_telemetry(event, socket, id, operation_name, extra \\ %{}) do
     metadata =
-      %{
-        platform: get_platform(socket),
-        session_id: get_session_id(socket),
-        client_app_version: get_client_app_version(socket),
-        user_id: get_user_id(socket),
-        id: id,
-        operation_name: operation_name
-      }
+      socket
+      |> operation_metadata(id, operation_name)
       |> Map.merge(extra)
 
     :telemetry.execute(event, %{}, metadata)
   end
 
+  defp operation_metadata(socket, id, operation_name) do
+    %{
+      platform: get_platform(socket),
+      session_id: get_session_id(socket),
+      client_app_version: get_client_app_version(socket),
+      user_id: get_user_id(socket),
+      id: id,
+      operation_name: operation_name
+    }
+  end
+
+  defp unsubscribe_topic_with_telemetry(socket, topic, id, operation_name) do
+    memory_before = process_memory()
+    message_queue_len_before = process_message_queue_len()
+    subscription_metrics = subscription_metrics_before(socket, topic)
+
+    start_metadata =
+      socket
+      |> operation_metadata(id, operation_name)
+      |> Map.merge(subscription_metrics)
+      |> Map.merge(%{
+        memory_before: memory_before,
+        message_queue_len_before: message_queue_len_before
+      })
+
+    :telemetry.span([:absinthe_graphql_ws, :handle_inbound, :complete], start_metadata, fn ->
+      unsubscribe_topic(socket, topic)
+
+      memory_after = process_memory()
+      message_queue_len_after = process_message_queue_len()
+
+      stop_metadata =
+        start_metadata
+        |> Map.merge(%{
+          memory_after: memory_after,
+          memory_delta: memory_after - memory_before,
+          message_queue_len_after: message_queue_len_after
+        })
+
+      {:ok, stop_metadata}
+    end)
+  end
+
   defp unsubscribe_topic(socket, topic) do
     Phoenix.PubSub.unsubscribe(socket.pubsub, topic)
     Absinthe.Subscription.unsubscribe(socket.endpoint, topic)
+  end
+
+  defp subscription_metrics_before(socket, topic) do
+    registry = Absinthe.Subscription.registry_name(socket.endpoint)
+    pid = self()
+
+    %{
+      field_keys_unregistered: registry |> Registry.lookup({pid, topic}) |> length(),
+      socket_subscription_count: map_size(socket.subscriptions),
+      pdict_subscription_count: count_process_subscription_docs(registry, pid),
+      subscription_field_key_count: count_subscription_field_keys(registry, pid, socket.subscriptions)
+    }
+  end
+
+  defp count_process_subscription_docs(registry, pid) do
+    match_spec = [{{{:"$1", :"$2"}, :_, :_}, [{:==, :"$1", pid}], [:"$2"]}]
+
+    registry
+    |> Registry.select(match_spec)
+    |> length()
+  end
+
+  defp count_subscription_field_keys(registry, pid, subscriptions) do
+    subscriptions
+    |> Map.keys()
+    |> Enum.map(fn doc_id ->
+      registry |> Registry.lookup({pid, doc_id}) |> length()
+    end)
+    |> Enum.sum()
+  end
+
+  defp process_memory do
+    {:memory, memory} = Process.info(self(), :memory)
+    memory
+  end
+
+  defp process_message_queue_len do
+    {:message_queue_len, message_queue_len} = Process.info(self(), :message_queue_len)
+    message_queue_len
   end
 
   defp close(code, message, socket) do
