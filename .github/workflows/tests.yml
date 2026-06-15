@@ -28,12 +28,12 @@ jobs:
         uses: actions/cache@v2
         with:
           path: deps
-          key: ${{ runner.os }}-test-deps-v1-${{ hashFiles('**/mix.lock', '.tool-versions') }}
+          key: ${{ runner.os }}-test-deps-v1-${{ hashFiles('**/mix.lock', 'mise.toml') }}
       - name: Cache _build
         uses: actions/cache@v2
         with:
           path: _build
-          key: ${{ runner.os }}-test-build-v1-${{ hashFiles('**/mix.lock', '.tool-versions') }}
+          key: ${{ runner.os }}-test-build-v1-${{ hashFiles('**/mix.lock', 'mise.toml') }}
       - name: Install dependencies
         run: mix deps.get
         working-directory: .
@@ -56,12 +56,12 @@ jobs:
         uses: actions/cache@v2
         with:
           path: deps
-          key: ${{ runner.os }}-dev-deps-v1-${{ hashFiles('**/mix.lock', '.tool-versions') }}
+          key: ${{ runner.os }}-dev-deps-v1-${{ hashFiles('**/mix.lock', 'mise.toml') }}
       - name: Cache _build
         uses: actions/cache@v2
         with:
           path: _build
-          key: ${{ runner.os }}-dev-build-v1-${{ hashFiles('**/mix.lock', '.tool-versions') }}
+          key: ${{ runner.os }}-dev-build-v1-${{ hashFiles('**/mix.lock', 'mise.toml') }}
       - name: Install dependencies
         run: mix deps.get
         working-directory: .
@@ -85,12 +85,12 @@ jobs:
         uses: actions/cache@v2
         with:
           path: deps
-          key: ${{ runner.os }}-test-deps-v1-${{ hashFiles('**/mix.lock', '.tool-versions') }}
+          key: ${{ runner.os }}-test-deps-v1-${{ hashFiles('**/mix.lock', 'mise.toml') }}
       - name: Cache _build
         uses: actions/cache@v2
         with:
           path: _build
-          key: ${{ runner.os }}-test-build-v1-${{ hashFiles('**/mix.lock', '.tool-versions') }}
+          key: ${{ runner.os }}-test-build-v1-${{ hashFiles('**/mix.lock', 'mise.toml') }}
       - name: Run tests
         run: mix test --color --warnings-as-errors
         working-directory: .
@@ -111,17 +111,17 @@ jobs:
         uses: actions/cache@v2
         with:
           path: deps
-          key: ${{ runner.os }}-test-deps-v1-${{ hashFiles('**/mix.lock', '.tool-versions') }}
+          key: ${{ runner.os }}-test-deps-v1-${{ hashFiles('**/mix.lock', 'mise.toml') }}
       - name: Cache _build
         uses: actions/cache@v2
         with:
           path: _build
-          key: ${{ runner.os }}-test-build-v1-${{ hashFiles('**/mix.lock', '.tool-versions') }}
+          key: ${{ runner.os }}-test-build-v1-${{ hashFiles('**/mix.lock', 'mise.toml') }}
       - name: Cache PLTs
         uses: actions/cache@v2
         with:
           path: priv/plts
-          key: ${{ runner.os }}-test-dialyxir-v1-${{ hashFiles('**/mix.lock', '.tool-versions') }}
+          key: ${{ runner.os }}-test-dialyxir-v1-${{ hashFiles('**/mix.lock', 'mise.toml') }}
       - name: Credo
         run: mix credo --strict
         working-directory: .
@@ -145,12 +145,12 @@ jobs:
         uses: actions/cache@v2
         with:
           path: deps
-          key: ${{ runner.os }}-dev-deps-v1-${{ hashFiles('**/mix.lock', '.tool-versions') }}
+          key: ${{ runner.os }}-dev-deps-v1-${{ hashFiles('**/mix.lock', 'mise.toml') }}
       - name: Cache _build
         uses: actions/cache@v2
         with:
           path: _build
-          key: ${{ runner.os }}-dev-build-v1-${{ hashFiles('**/mix.lock', '.tool-versions') }}
+          key: ${{ runner.os }}-dev-build-v1-${{ hashFiles('**/mix.lock', 'mise.toml') }}
       - name: Check Elixir formatting
         run: mix format --check-formatted
         working-directory: .
@@ -179,12 +179,12 @@ jobs:
         uses: actions/cache@v2
         with:
           path: deps
-          key: ${{ runner.os }}-dev-deps-v1-${{ hashFiles('**/mix.lock', '.tool-versions') }}
+          key: ${{ runner.os }}-dev-deps-v1-${{ hashFiles('**/mix.lock', 'mise.toml') }}
       - name: Cache _build
         uses: actions/cache@v2
         with:
           path: _build
-          key: ${{ runner.os }}-dev-build-v1-${{ hashFiles('**/mix.lock', '.tool-versions') }}
+          key: ${{ runner.os }}-dev-build-v1-${{ hashFiles('**/mix.lock', 'mise.toml') }}
       - name: Publish to Hex
         uses: synchronal/hex-publish-action@v1
         with:
