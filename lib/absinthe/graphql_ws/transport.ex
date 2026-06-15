@@ -279,11 +279,45 @@ defmodule Absinthe.GraphqlWS.Transport do
         opts
       })
 
-      run_doc(socket, id, query, socket.absinthe, opts, operation_name)
+      socket
+      |> run_doc(id, query, socket.absinthe, opts, operation_name)
+      |> tap_subscribe_success(socket, id, operation_name)
     else
       _ ->
         {:ok, socket}
     end
+  end
+
+  defp tap_subscribe_success({:ok, _socket} = result, socket, id, operation_name) do
+    emit_subscribe_success(socket, id, operation_name)
+    result
+  end
+
+  defp tap_subscribe_success({:reply, :ok, {:text, message}, _socket} = result, socket, id, operation_name) do
+    case Util.json_library().decode(message) do
+      {:ok, %{"type" => "next"}} ->
+        emit_subscribe_success(socket, id, operation_name)
+
+      _ ->
+        :ok
+    end
+
+    result
+  end
+
+  defp tap_subscribe_success(result, _socket, _id, _operation_name), do: result
+
+  defp emit_subscribe_success(socket, id, operation_name) do
+    metadata = %{
+      platform: get_platform(socket),
+      session_id: get_session_id(socket),
+      client_app_version: get_client_app_version(socket),
+      user_id: get_user_id(socket),
+      id: id,
+      operation_name: operation_name
+    }
+
+    :telemetry.execute([:absinthe_graphql_ws, :handle_inbound, :subscribe], %{}, metadata)
   end
 
   defp close(code, message, socket) do
