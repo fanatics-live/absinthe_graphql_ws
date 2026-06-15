@@ -154,8 +154,13 @@ defmodule Absinthe.GraphqlWS.Transport do
   Process was stopped.
   """
   @spec terminate(term(), socket()) :: :ok
-  def terminate(reason, _socket) do
+  def terminate(reason, socket) do
     debug("terminated: #{inspect(reason)}")
+
+    if map_size(socket.subscriptions) > 0 do
+      emit_terminate_telemetry(socket, reason)
+    end
+
     :ok
   end
 
@@ -217,21 +222,17 @@ defmodule Absinthe.GraphqlWS.Transport do
 
   def handle_inbound(%{"id" => id, "type" => "complete"}, socket) do
     socket.subscriptions
-    |> Enum.find_value(fn
-      {topic, %{id: ^id}} ->
-        {:ok, topic}
-
-      {topic, ^id} ->
-        {:ok, topic}
-
-      _ ->
-        false
+    |> Enum.find_value(fn {topic, _} ->
+      case subscription_info(socket.subscriptions, topic) do
+        {^id, operation_name} -> {:ok, topic, operation_name}
+        _ -> false
+      end
     end)
     |> case do
-      {:ok, topic} ->
+      {:ok, topic, operation_name} ->
         debug("unsubscribing from topic #{topic}")
-        Phoenix.PubSub.unsubscribe(socket.pubsub, topic)
-        Absinthe.Subscription.unsubscribe(socket.endpoint, topic)
+        unsubscribe_topic(socket, topic)
+        emit_complete_success(socket, id, operation_name)
 
         {:ok, %{socket | subscriptions: Map.delete(socket.subscriptions, topic)}}
 
@@ -308,16 +309,52 @@ defmodule Absinthe.GraphqlWS.Transport do
   defp tap_subscribe_success(result, _socket, _id, _operation_name), do: result
 
   defp emit_subscribe_success(socket, id, operation_name) do
+    emit_operation_telemetry([:absinthe_graphql_ws, :handle_inbound, :subscribe], socket, id, operation_name)
+  end
+
+  defp emit_complete_success(socket, id, operation_name) do
+    emit_operation_telemetry([:absinthe_graphql_ws, :handle_inbound, :complete], socket, id, operation_name)
+  end
+
+  defp emit_terminate_telemetry(socket, reason) do
+    subscriptions =
+      Enum.map(socket.subscriptions, fn {topic, _} ->
+        {id, operation_name} = subscription_info(socket.subscriptions, topic)
+        %{id: id, operation_name: operation_name}
+      end)
+
     metadata = %{
       platform: get_platform(socket),
       session_id: get_session_id(socket),
       client_app_version: get_client_app_version(socket),
       user_id: get_user_id(socket),
-      id: id,
-      operation_name: operation_name
+      reason: reason,
+      subscriptions: subscriptions
     }
 
-    :telemetry.execute([:absinthe_graphql_ws, :handle_inbound, :subscribe], %{}, metadata)
+    measurements = %{subscription_count: length(subscriptions)}
+
+    :telemetry.execute([:absinthe_graphql_ws, :terminate, :complete], measurements, metadata)
+  end
+
+  defp emit_operation_telemetry(event, socket, id, operation_name, extra \\ %{}) do
+    metadata =
+      %{
+        platform: get_platform(socket),
+        session_id: get_session_id(socket),
+        client_app_version: get_client_app_version(socket),
+        user_id: get_user_id(socket),
+        id: id,
+        operation_name: operation_name
+      }
+      |> Map.merge(extra)
+
+    :telemetry.execute(event, %{}, metadata)
+  end
+
+  defp unsubscribe_topic(socket, topic) do
+    Phoenix.PubSub.unsubscribe(socket.pubsub, topic)
+    Absinthe.Subscription.unsubscribe(socket.endpoint, topic)
   end
 
   defp close(code, message, socket) do
