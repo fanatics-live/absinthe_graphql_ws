@@ -14,23 +14,23 @@ env:
 jobs:
   build_test:
     name: Build Test
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-latest
     env:
       MIX_ENV: test
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
       - name: Set up Elixir
         uses: erlef/setup-beam@v1
         with:
           elixir-version: ${{ env.ELIXIR_VERSION }}
           otp-version: ${{ env.OTP_VERSION }}
       - name: Cache deps
-        uses: actions/cache@v2
+        uses: actions/cache@v4
         with:
           path: deps
           key: ${{ runner.os }}-test-deps-v1-${{ hashFiles('**/mix.lock', 'mise.toml') }}
       - name: Cache _build
-        uses: actions/cache@v2
+        uses: actions/cache@v4
         with:
           path: _build
           key: ${{ runner.os }}-test-build-v1-${{ hashFiles('**/mix.lock', 'mise.toml') }}
@@ -42,23 +42,23 @@ jobs:
         working-directory: .
   build_dev:
     name: Build Dev
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-latest
     env:
       MIX_ENV: dev
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
       - name: Set up Elixir
         uses: erlef/setup-beam@v1
         with:
           elixir-version: ${{ env.ELIXIR_VERSION }}
           otp-version: ${{ env.OTP_VERSION }}
       - name: Cache deps
-        uses: actions/cache@v2
+        uses: actions/cache@v4
         with:
           path: deps
           key: ${{ runner.os }}-dev-deps-v1-${{ hashFiles('**/mix.lock', 'mise.toml') }}
       - name: Cache _build
-        uses: actions/cache@v2
+        uses: actions/cache@v4
         with:
           path: _build
           key: ${{ runner.os }}-dev-build-v1-${{ hashFiles('**/mix.lock', 'mise.toml') }}
@@ -71,23 +71,23 @@ jobs:
   test:
     name: Test
     needs: build_test
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-latest
     env:
       MIX_ENV: test
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
       - name: Set up Elixir
         uses: erlef/setup-beam@v1
         with:
           elixir-version: ${{ env.ELIXIR_VERSION }}
           otp-version: ${{ env.OTP_VERSION }}
       - name: Cache deps
-        uses: actions/cache@v2
+        uses: actions/cache@v4
         with:
           path: deps
           key: ${{ runner.os }}-test-deps-v1-${{ hashFiles('**/mix.lock', 'mise.toml') }}
       - name: Cache _build
-        uses: actions/cache@v2
+        uses: actions/cache@v4
         with:
           path: _build
           key: ${{ runner.os }}-test-build-v1-${{ hashFiles('**/mix.lock', 'mise.toml') }}
@@ -97,28 +97,28 @@ jobs:
   credo_and_dialyxir:
     name: Credo + Dialyxir
     needs: build_test
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-latest
     env:
       MIX_ENV: test
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
       - name: Set up Elixir
         uses: erlef/setup-beam@v1
         with:
           elixir-version: ${{ env.ELIXIR_VERSION }}
           otp-version: ${{ env.OTP_VERSION }}
       - name: Cache deps
-        uses: actions/cache@v2
+        uses: actions/cache@v4
         with:
           path: deps
           key: ${{ runner.os }}-test-deps-v1-${{ hashFiles('**/mix.lock', 'mise.toml') }}
       - name: Cache _build
-        uses: actions/cache@v2
+        uses: actions/cache@v4
         with:
           path: _build
           key: ${{ runner.os }}-test-build-v1-${{ hashFiles('**/mix.lock', 'mise.toml') }}
       - name: Cache PLTs
-        uses: actions/cache@v2
+        uses: actions/cache@v4
         with:
           path: priv/plts
           key: ${{ runner.os }}-test-dialyxir-v1-${{ hashFiles('**/mix.lock', 'mise.toml') }}
@@ -131,23 +131,23 @@ jobs:
   audit:
     name: Audit
     needs: build_dev
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-latest
     env:
       MIX_ENV: dev
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
       - name: Set up Elixir
         uses: erlef/setup-beam@v1
         with:
           elixir-version: ${{ env.ELIXIR_VERSION }}
           otp-version: ${{ env.OTP_VERSION }}
       - name: Cache deps
-        uses: actions/cache@v2
+        uses: actions/cache@v4
         with:
           path: deps
           key: ${{ runner.os }}-dev-deps-v1-${{ hashFiles('**/mix.lock', 'mise.toml') }}
       - name: Cache _build
-        uses: actions/cache@v2
+        uses: actions/cache@v4
         with:
           path: _build
           key: ${{ runner.os }}-dev-build-v1-${{ hashFiles('**/mix.lock', 'mise.toml') }}
@@ -167,21 +167,21 @@ jobs:
       - test
       - credo_and_dialyxir
       - audit
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
       - name: Set up Elixir
         uses: erlef/setup-beam@v1
         with:
           elixir-version: ${{ env.ELIXIR_VERSION }}
           otp-version: ${{ env.OTP_VERSION }}
       - name: Cache deps
-        uses: actions/cache@v2
+        uses: actions/cache@v4
         with:
           path: deps
           key: ${{ runner.os }}-dev-deps-v1-${{ hashFiles('**/mix.lock', 'mise.toml') }}
       - name: Cache _build
-        uses: actions/cache@v2
+        uses: actions/cache@v4
         with:
           path: _build
           key: ${{ runner.os }}-dev-build-v1-${{ hashFiles('**/mix.lock', 'mise.toml') }}
