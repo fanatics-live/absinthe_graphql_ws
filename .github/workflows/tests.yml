@@ -25,12 +25,12 @@ jobs:
           elixir-version: ${{ env.ELIXIR_VERSION }}
           otp-version: ${{ env.OTP_VERSION }}
       - name: Cache deps
-        uses: actions/cache@v2
+        uses: actions/cache@v4
         with:
           path: deps
           key: ${{ runner.os }}-test-deps-v1-${{ hashFiles('**/mix.lock', 'mise.toml') }}
       - name: Cache _build
-        uses: actions/cache@v2
+        uses: actions/cache@v4
         with:
           path: _build
           key: ${{ runner.os }}-test-build-v1-${{ hashFiles('**/mix.lock', 'mise.toml') }}
@@ -53,12 +53,12 @@ jobs:
           elixir-version: ${{ env.ELIXIR_VERSION }}
           otp-version: ${{ env.OTP_VERSION }}
       - name: Cache deps
-        uses: actions/cache@v2
+        uses: actions/cache@v4
         with:
           path: deps
           key: ${{ runner.os }}-dev-deps-v1-${{ hashFiles('**/mix.lock', 'mise.toml') }}
       - name: Cache _build
-        uses: actions/cache@v2
+        uses: actions/cache@v4
         with:
           path: _build
           key: ${{ runner.os }}-dev-build-v1-${{ hashFiles('**/mix.lock', 'mise.toml') }}
@@ -82,12 +82,12 @@ jobs:
           elixir-version: ${{ env.ELIXIR_VERSION }}
           otp-version: ${{ env.OTP_VERSION }}
       - name: Cache deps
-        uses: actions/cache@v2
+        uses: actions/cache@v4
         with:
           path: deps
           key: ${{ runner.os }}-test-deps-v1-${{ hashFiles('**/mix.lock', 'mise.toml') }}
       - name: Cache _build
-        uses: actions/cache@v2
+        uses: actions/cache@v4
         with:
           path: _build
           key: ${{ runner.os }}-test-build-v1-${{ hashFiles('**/mix.lock', 'mise.toml') }}
@@ -108,17 +108,17 @@ jobs:
           elixir-version: ${{ env.ELIXIR_VERSION }}
           otp-version: ${{ env.OTP_VERSION }}
       - name: Cache deps
-        uses: actions/cache@v2
+        uses: actions/cache@v4
         with:
           path: deps
           key: ${{ runner.os }}-test-deps-v1-${{ hashFiles('**/mix.lock', 'mise.toml') }}
       - name: Cache _build
-        uses: actions/cache@v2
+        uses: actions/cache@v4
         with:
           path: _build
           key: ${{ runner.os }}-test-build-v1-${{ hashFiles('**/mix.lock', 'mise.toml') }}
       - name: Cache PLTs
-        uses: actions/cache@v2
+        uses: actions/cache@v4
         with:
           path: priv/plts
           key: ${{ runner.os }}-test-dialyxir-v1-${{ hashFiles('**/mix.lock', 'mise.toml') }}
@@ -142,12 +142,12 @@ jobs:
           elixir-version: ${{ env.ELIXIR_VERSION }}
           otp-version: ${{ env.OTP_VERSION }}
       - name: Cache deps
-        uses: actions/cache@v2
+        uses: actions/cache@v4
         with:
           path: deps
           key: ${{ runner.os }}-dev-deps-v1-${{ hashFiles('**/mix.lock', 'mise.toml') }}
       - name: Cache _build
-        uses: actions/cache@v2
+        uses: actions/cache@v4
         with:
           path: _build
           key: ${{ runner.os }}-dev-build-v1-${{ hashFiles('**/mix.lock', 'mise.toml') }}
@@ -176,12 +176,12 @@ jobs:
           elixir-version: ${{ env.ELIXIR_VERSION }}
           otp-version: ${{ env.OTP_VERSION }}
       - name: Cache deps
-        uses: actions/cache@v2
+        uses: actions/cache@v4
         with:
           path: deps
           key: ${{ runner.os }}-dev-deps-v1-${{ hashFiles('**/mix.lock', 'mise.toml') }}
       - name: Cache _build
-        uses: actions/cache@v2
+        uses: actions/cache@v4
         with:
           path: _build
           key: ${{ runner.os }}-dev-build-v1-${{ hashFiles('**/mix.lock', 'mise.toml') }}
