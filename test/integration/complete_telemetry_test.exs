@@ -1,27 +1,39 @@
 defmodule Absinthe.GraphqlWS.CompleteTelemetryTest do
   use ExUnit.Case
 
-  @handler_id {__MODULE__, :complete_span}
+  @span_handler_id {__MODULE__, :complete_span}
+  @execute_handler_id {__MODULE__, :complete_execute}
 
   setup context do
-    events = [
-      [:absinthe_graphql_ws, :handle_inbound, :complete, :start],
-      [:absinthe_graphql_ws, :handle_inbound, :complete, :stop]
-    ]
-
     parent = self()
 
     :ok =
       :telemetry.attach_many(
-        @handler_id,
-        events,
+        @span_handler_id,
+        [
+          [:absinthe_graphql_ws, :handle_inbound, :complete, :start],
+          [:absinthe_graphql_ws, :handle_inbound, :complete, :stop]
+        ],
         fn event, measurements, metadata, _config ->
-          send(parent, {:telemetry, event, measurements, metadata})
+          send(parent, {:telemetry, :span, event, measurements, metadata})
         end,
         nil
       )
 
-    on_exit(fn -> :telemetry.detach(@handler_id) end)
+    :ok =
+      :telemetry.attach(
+        @execute_handler_id,
+        [:absinthe_graphql_ws, :handle_inbound, :complete],
+        fn event, measurements, metadata, _config ->
+          send(parent, {:telemetry, :execute, event, measurements, metadata})
+        end,
+        nil
+      )
+
+    on_exit(fn ->
+      :telemetry.detach(@span_handler_id)
+      :telemetry.detach(@execute_handler_id)
+    end)
 
     assert {:ok, client} = Test.Client.start()
     on_exit(fn -> Test.Client.close(client) end)
@@ -32,9 +44,7 @@ defmodule Absinthe.GraphqlWS.CompleteTelemetryTest do
     Map.merge(context, %{client: client})
   end
 
-  test "emits a telemetry span around unsubscribe with process and subscription metrics", %{
-    client: client
-  } do
+  test "emits a performance span and lifecycle execute around unsubscribe", %{client: client} do
     id = "subscription-to-unsubscribe"
 
     :ok =
@@ -58,7 +68,7 @@ defmodule Absinthe.GraphqlWS.CompleteTelemetryTest do
 
     :ok = Test.Client.push(client, %{id: id, type: "complete"})
 
-    assert_receive {:telemetry, [:absinthe_graphql_ws, :handle_inbound, :complete, :start], start_measurements,
+    assert_receive {:telemetry, :span, [:absinthe_graphql_ws, :handle_inbound, :complete, :start], start_measurements,
                     start_metadata}
 
     assert Map.has_key?(start_measurements, :monotonic_time)
@@ -66,13 +76,10 @@ defmodule Absinthe.GraphqlWS.CompleteTelemetryTest do
 
     assert start_metadata.id == id
     assert start_metadata.socket_subscription_count == 1
-    assert start_metadata.pdict_subscription_count == 1
-    assert start_metadata.field_keys_unregistered == 1
-    assert start_metadata.subscription_field_key_count == 1
     assert is_integer(start_metadata.memory_before)
     assert is_integer(start_metadata.message_queue_len_before)
 
-    assert_receive {:telemetry, [:absinthe_graphql_ws, :handle_inbound, :complete, :stop], stop_measurements,
+    assert_receive {:telemetry, :span, [:absinthe_graphql_ws, :handle_inbound, :complete, :stop], stop_measurements,
                     stop_metadata}
 
     assert Map.has_key?(stop_measurements, :duration)
@@ -80,12 +87,18 @@ defmodule Absinthe.GraphqlWS.CompleteTelemetryTest do
 
     assert stop_metadata.id == id
     assert stop_metadata.socket_subscription_count == 1
-    assert stop_metadata.field_keys_unregistered == 1
     assert is_integer(stop_metadata.memory_before)
     assert is_integer(stop_metadata.memory_after)
     assert is_integer(stop_metadata.memory_delta)
     assert stop_metadata.memory_delta == stop_metadata.memory_after - stop_metadata.memory_before
     assert is_integer(stop_metadata.message_queue_len_before)
     assert is_integer(stop_metadata.message_queue_len_after)
+
+    assert_receive {:telemetry, :execute, [:absinthe_graphql_ws, :handle_inbound, :complete], execute_measurements,
+                    execute_metadata}
+
+    assert execute_measurements == %{}
+    assert execute_metadata.id == id
+    assert execute_metadata.socket_subscription_count == 1
   end
 end
