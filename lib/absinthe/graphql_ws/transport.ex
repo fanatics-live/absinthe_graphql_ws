@@ -231,7 +231,7 @@ defmodule Absinthe.GraphqlWS.Transport do
     |> case do
       {:ok, topic, operation_name} ->
         debug("unsubscribing from topic #{topic}")
-        unsubscribe_topic(socket, topic)
+        unsubscribe_topic_with_telemetry(socket, topic, id, operation_name)
         emit_complete_success(socket, id, operation_name)
 
         {:ok, %{socket | subscriptions: Map.delete(socket.subscriptions, topic)}}
@@ -313,7 +313,13 @@ defmodule Absinthe.GraphqlWS.Transport do
   end
 
   defp emit_complete_success(socket, id, operation_name) do
-    emit_operation_telemetry([:absinthe_graphql_ws, :handle_inbound, :complete], socket, id, operation_name)
+    emit_operation_telemetry(
+      [:absinthe_graphql_ws, :handle_inbound, :complete],
+      socket,
+      id,
+      operation_name,
+      %{socket_subscription_count: map_size(socket.subscriptions)}
+    )
   end
 
   defp emit_terminate_telemetry(socket, reason) do
@@ -339,22 +345,69 @@ defmodule Absinthe.GraphqlWS.Transport do
 
   defp emit_operation_telemetry(event, socket, id, operation_name, extra \\ %{}) do
     metadata =
-      %{
-        platform: get_platform(socket),
-        session_id: get_session_id(socket),
-        client_app_version: get_client_app_version(socket),
-        user_id: get_user_id(socket),
-        id: id,
-        operation_name: operation_name
-      }
+      socket
+      |> operation_metadata(id, operation_name)
       |> Map.merge(extra)
 
     :telemetry.execute(event, %{}, metadata)
   end
 
+  defp operation_metadata(socket, id, operation_name) do
+    %{
+      platform: get_platform(socket),
+      session_id: get_session_id(socket),
+      client_app_version: get_client_app_version(socket),
+      user_id: get_user_id(socket),
+      id: id,
+      operation_name: operation_name
+    }
+  end
+
+  defp unsubscribe_topic_with_telemetry(socket, topic, id, operation_name) do
+    memory_before = process_memory()
+    message_queue_len_before = process_message_queue_len()
+    socket_subscription_count = map_size(socket.subscriptions)
+
+    start_metadata =
+      socket
+      |> operation_metadata(id, operation_name)
+      |> Map.merge(%{
+        socket_subscription_count: socket_subscription_count,
+        memory_before: memory_before,
+        message_queue_len_before: message_queue_len_before
+      })
+
+    :telemetry.span([:absinthe_graphql_ws, :handle_inbound, :complete], start_metadata, fn ->
+      unsubscribe_topic(socket, topic)
+
+      memory_after = process_memory()
+      message_queue_len_after = process_message_queue_len()
+
+      stop_metadata =
+        start_metadata
+        |> Map.merge(%{
+          memory_after: memory_after,
+          memory_delta: memory_after - memory_before,
+          message_queue_len_after: message_queue_len_after
+        })
+
+      {:ok, stop_metadata}
+    end)
+  end
+
   defp unsubscribe_topic(socket, topic) do
     Phoenix.PubSub.unsubscribe(socket.pubsub, topic)
     Absinthe.Subscription.unsubscribe(socket.endpoint, topic)
+  end
+
+  defp process_memory do
+    {:memory, memory} = Process.info(self(), :memory)
+    memory
+  end
+
+  defp process_message_queue_len do
+    {:message_queue_len, message_queue_len} = Process.info(self(), :message_queue_len)
+    message_queue_len
   end
 
   defp close(code, message, socket) do
