@@ -68,8 +68,7 @@ defmodule Absinthe.GraphqlWS.CompleteTelemetryTest do
 
     :ok = Test.Client.push(client, %{id: id, type: "complete"})
 
-    assert_receive {:telemetry, :span, [:absinthe_graphql_ws, :handle_inbound, :complete, :start], start_measurements,
-                    start_metadata}
+    assert_receive {:telemetry, :span, [:absinthe_graphql_ws, :handle_inbound, :complete, :start], start_measurements, start_metadata}
 
     assert Map.has_key?(start_measurements, :monotonic_time)
     assert Map.has_key?(start_measurements, :system_time)
@@ -79,8 +78,7 @@ defmodule Absinthe.GraphqlWS.CompleteTelemetryTest do
     assert is_integer(start_metadata.memory_before)
     assert is_integer(start_metadata.message_queue_len_before)
 
-    assert_receive {:telemetry, :span, [:absinthe_graphql_ws, :handle_inbound, :complete, :stop], stop_measurements,
-                    stop_metadata}
+    assert_receive {:telemetry, :span, [:absinthe_graphql_ws, :handle_inbound, :complete, :stop], stop_measurements, stop_metadata}
 
     assert Map.has_key?(stop_measurements, :duration)
     assert is_integer(stop_measurements.duration)
@@ -94,8 +92,7 @@ defmodule Absinthe.GraphqlWS.CompleteTelemetryTest do
     assert is_integer(stop_metadata.message_queue_len_before)
     assert is_integer(stop_metadata.message_queue_len_after)
 
-    assert_receive {:telemetry, :execute, [:absinthe_graphql_ws, :handle_inbound, :complete], execute_measurements,
-                    execute_metadata}
+    assert_receive {:telemetry, :execute, [:absinthe_graphql_ws, :handle_inbound, :complete], execute_measurements, execute_metadata}
 
     assert execute_measurements == %{}
     assert execute_metadata.id == id
