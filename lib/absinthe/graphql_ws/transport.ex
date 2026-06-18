@@ -190,6 +190,7 @@ defmodule Absinthe.GraphqlWS.Transport do
         {:ok, payload, socket} ->
           socket = %{socket | initialized?: true}
           maybe_schedule_gc(socket)
+          emit_connection_init_telemetry(socket)
           {:reply, :ok, {:text, Message.ConnectionAck.new(payload)}, socket}
 
         {:error, payload, socket} ->
@@ -198,6 +199,7 @@ defmodule Absinthe.GraphqlWS.Transport do
     else
       socket = %{socket | initialized?: true}
       maybe_schedule_gc(socket)
+      emit_connection_init_telemetry(socket)
       {:reply, :ok, {:text, Message.ConnectionAck.new()}, socket}
     end
   end
@@ -308,6 +310,18 @@ defmodule Absinthe.GraphqlWS.Transport do
 
   defp tap_subscribe_success(result, _socket, _id, _operation_name), do: result
 
+  defp emit_connection_init_telemetry(socket) do
+    metadata =
+      socket_metadata(socket)
+      |> Map.put(:auth_status, socket.assigns[:auth_status])
+
+    :telemetry.execute(
+      [:absinthe_graphql_ws, :handle_inbound, :connection_init],
+      %{socket_subscription_count: 0},
+      metadata
+    )
+  end
+
   defp emit_subscribe_success(socket, id, operation_name) do
     emit_operation_telemetry([:absinthe_graphql_ws, :handle_inbound, :subscribe], socket, id, operation_name)
   end
@@ -352,15 +366,19 @@ defmodule Absinthe.GraphqlWS.Transport do
     :telemetry.execute(event, %{}, metadata)
   end
 
-  defp operation_metadata(socket, id, operation_name) do
+  defp socket_metadata(socket) do
     %{
       platform: get_platform(socket),
       session_id: get_session_id(socket),
       client_app_version: get_client_app_version(socket),
-      user_id: get_user_id(socket),
-      id: id,
-      operation_name: operation_name
+      user_id: get_user_id(socket)
     }
+  end
+
+  defp operation_metadata(socket, id, operation_name) do
+    socket
+    |> socket_metadata()
+    |> Map.merge(%{id: id, operation_name: operation_name})
   end
 
   defp unsubscribe_topic_with_telemetry(socket, topic, id, operation_name) do
