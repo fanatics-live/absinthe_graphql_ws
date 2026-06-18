@@ -265,7 +265,7 @@ defmodule Absinthe.GraphqlWS.Socket do
       def terminate(message, socket),
         do: Absinthe.GraphqlWS.Transport.terminate(message, socket)
 
-      defoverridable terminate: 2
+      defoverridable init: 1, terminate: 2
     end
   end
 
