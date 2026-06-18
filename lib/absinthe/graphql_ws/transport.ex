@@ -157,10 +157,19 @@ defmodule Absinthe.GraphqlWS.Transport do
   def terminate(reason, socket) do
     debug("terminated: #{inspect(reason)}")
 
+    emit_transport_terminate_telemetry(socket, reason)
+
     if map_size(socket.subscriptions) > 0 do
       emit_terminate_telemetry(socket, reason)
     end
 
+    :ok
+  end
+
+  @doc false
+  @spec emit_transport_init(socket()) :: :ok
+  def emit_transport_init(socket) do
+    :telemetry.execute([:absinthe_graphql_ws, :transport, :init], %{}, socket_metadata(socket))
     :ok
   end
 
@@ -320,6 +329,16 @@ defmodule Absinthe.GraphqlWS.Transport do
       %{socket_subscription_count: 0},
       metadata
     )
+  end
+
+  defp emit_transport_terminate_telemetry(socket, reason) do
+    measurements = %{socket_subscription_count: map_size(socket.subscriptions)}
+
+    metadata =
+      socket_metadata(socket)
+      |> Map.put(:reason, reason)
+
+    :telemetry.execute([:absinthe_graphql_ws, :transport, :terminate], measurements, metadata)
   end
 
   defp emit_subscribe_success(socket, id, operation_name) do
