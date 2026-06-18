@@ -238,23 +238,7 @@ defmodule Absinthe.GraphqlWS.Socket do
 
       @doc false
       @impl Phoenix.Socket.Transport
-      def init(socket) do
-        :telemetry.execute(
-          [:absinthe_graphql_ws, :transport, :init],
-          %{},
-          %{
-            platform: socket.assigns[:platform] || "unknown",
-            session_id: socket.assigns[:session_id],
-            client_app_version: socket.assigns[:client_app_version],
-            user_id: socket.assigns[:user_id]
-          }
-        )
-
-        if socket.keepalive > 0,
-          do: Process.send_after(self(), :keepalive, socket.keepalive)
-
-        {:ok, socket}
-      end
+      def init(socket), do: Absinthe.GraphqlWS.Transport.init(socket)
 
       @doc false
       @impl Phoenix.Socket.Transport
