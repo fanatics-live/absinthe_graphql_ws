@@ -108,6 +108,77 @@ An example of handle_info
   end
 ```
 
+## Telemetry
+
+All events are emitted via `:telemetry` from `Absinthe.GraphqlWS.Transport`. Attach handlers with `:telemetry.attach/4` or `:telemetry.attach_many/4`.
+
+**Convention:** numeric load signals belong in **measurements**; dimensions belong in **metadata**. Several lifecycle events include `socket_subscription_count` in measurements so consumers can build per-socket subscription load distributions without high-cardinality tags.
+
+### Shared metadata
+
+Most events include some or all of these socket fields (from `socket.assigns`):
+
+| Field | Source |
+| --- | --- |
+| `platform` | `socket.assigns[:platform]` (defaults to `"unknown"`) |
+| `session_id` | `socket.assigns[:session_id]` |
+| `client_app_version` | `socket.assigns[:client_app_version]` |
+| `user_id` | `socket.assigns[:user_id]` |
+
+Operation-scoped events also include `id` (GraphQL-WS message id) and `operation_name`.
+
+### Transport lifecycle
+
+| Event | When | Measurements | Metadata |
+| --- | --- | --- | --- |
+| `[:absinthe_graphql_ws, :transport, :init]` | WebSocket upgrade (`Transport.init/1`) | — | Shared socket metadata |
+| `[:absinthe_graphql_ws, :transport, :terminate]` | Socket process shutdown (`Transport.terminate/2`) | `socket_subscription_count` | Shared socket metadata, `reason`, `subscriptions` (list of `%{id, operation_name}`; `[]` on clean close) |
+
+### `handle_inbound` (client JSON frames)
+
+| Event | When | Measurements | Metadata |
+| --- | --- | --- | --- |
+| `[:absinthe_graphql_ws, :handle_inbound, :connection_init]` | Successful `connection_init` | `socket_subscription_count` (`0`) | Shared socket metadata, `auth_status` |
+| `[:absinthe_graphql_ws, :handle_inbound, :subscribe]` | Subscription registered (or query/mutation `next` reply) | `socket_subscription_count` | Operation metadata |
+| `[:absinthe_graphql_ws, :handle_inbound, :complete]` | Client `complete` frame (lifecycle counter) | `socket_subscription_count` | Operation metadata |
+| `[:absinthe_graphql_ws, :handle_inbound, :complete, :start]` | Start of unsubscribe work (span) | `monotonic_time`, `system_time` | Operation metadata, `memory_before`, `message_queue_len_before` |
+| `[:absinthe_graphql_ws, :handle_inbound, :complete, :stop]` | End of unsubscribe work (span) | `duration` | Span start metadata plus `memory_after`, `memory_delta`, `message_queue_len_after` |
+| `[:absinthe_graphql_ws, :handle_inbound, :ping]` | Client `ping` frame | `payload_size`, `socket_subscription_count` | Shared socket metadata |
+| `[:absinthe_graphql_ws, :handle_inbound, :error]` | Protocol error before close (e.g. duplicate init, subscribe before init) | — | Shared socket metadata, `code`, `operation`, `reason` |
+
+### `handle_info` (internal messages)
+
+| Event | When | Measurements | Metadata |
+| --- | --- | --- | --- |
+| `[:absinthe_graphql_ws, :handle_info, :broadcast]` | Subscription publish to client | `payload_size` | Shared socket metadata, `payload`, `operation_name` |
+
+### Keepalive (server-side control frames)
+
+| Event | When | Measurements | Metadata |
+| --- | --- | --- | --- |
+| `[:absinthe_graphql_ws, :keepalive, :start]` | Outbound `:ping` scheduled | `system_time` | — |
+| `[:absinthe_graphql_ws, :keepalive, :stop]` | Inbound `:pong` received | `duration` | — |
+
+### Garbage collection (optional, when `gc_interval` assign is set)
+
+| Event | When | Measurements | Metadata |
+| --- | --- | --- | --- |
+| `[:absinthe_graphql_ws, :gc, :start]` | GC span start | `monotonic_time`, `system_time` | `before` (process info map) |
+| `[:absinthe_graphql_ws, :gc, :stop]` | GC span stop | `duration` | `before`, `after` (process info maps) |
+
+### Example
+
+```elixir
+:telemetry.attach(
+  "absinthe-graphql-ws-transport-init",
+  [:absinthe_graphql_ws, :transport, :init],
+  fn _event, measurements, metadata, _config ->
+    # increment counter, tag with metadata.platform, etc.
+  end,
+  nil
+)
+```
+
 ## Benchmarks
 
 Benchmarks live in the `benchmarks` directory, and can be run with `MIX_ENV=bench mix run
