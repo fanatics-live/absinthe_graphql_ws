@@ -246,7 +246,7 @@ defmodule Absinthe.GraphqlWS.Transport do
   def handle_inbound(%{"type" => "ping"}, socket) do
     system_time = System.system_time()
     message = Message.Pong.new()
-    measurements = %{payload_size: byte_size(message)}
+    measurements = %{payload_size: byte_size(message), socket_subscription_count: map_size(socket.subscriptions)}
     metadata = %{platform: get_platform(socket)}
     :telemetry.execute([:absinthe_graphql_ws, :handle_inbound, :ping], measurements, metadata)
 
