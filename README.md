@@ -110,60 +110,69 @@ An example of handle_info
 
 ## Telemetry
 
-All events are emitted via `:telemetry` from `Absinthe.GraphqlWS.Transport`. Attach handlers with `:telemetry.attach/4` or `:telemetry.attach_many/4`.
+All events are emitted via `:telemetry` from `Absinthe.GraphqlWS.Transport`. Attach handlers with
+`:telemetry.attach/4` or `:telemetry.attach_many/4`.
 
-**Convention:** numeric load signals belong in **measurements**; dimensions belong in **metadata**. Several lifecycle events include `socket_subscription_count` in measurements so consumers can build per-socket subscription load distributions without high-cardinality tags.
+**Convention:** numeric load signals belong in **measurements**; dimensions belong in **metadata**.
+Several lifecycle events include `socket_subscription_count` in measurements so consumers can build
+per-socket subscription load distributions without high-cardinality tags.
 
 ### Shared metadata
 
 Most events include some or all of these socket fields (from `socket.assigns`):
 
-| Field | Source |
-| --- | --- |
-| `platform` | `socket.assigns[:platform]` (defaults to `"unknown"`) |
-| `session_id` | `socket.assigns[:session_id]` |
-| `client_app_version` | `socket.assigns[:client_app_version]` |
-| `user_id` | `socket.assigns[:user_id]` |
+- `platform` — `socket.assigns[:platform]` (defaults to `"unknown"`)
+- `session_id` — `socket.assigns[:session_id]`
+- `client_app_version` — `socket.assigns[:client_app_version]`
+- `user_id` — `socket.assigns[:user_id]`
 
 Operation-scoped events also include `id` (GraphQL-WS message id) and `operation_name`.
 
 ### Transport lifecycle
 
-| Event | When | Measurements | Metadata |
-| --- | --- | --- | --- |
-| `[:absinthe_graphql_ws, :transport, :init]` | WebSocket upgrade (`Transport.init/1`) | — | Shared socket metadata |
-| `[:absinthe_graphql_ws, :transport, :terminate]` | Socket process shutdown (`Transport.terminate/2`) | `socket_subscription_count` | Shared socket metadata, `reason`, `subscriptions` (list of `%{id, operation_name}`; `[]` on clean close) |
+- `[:absinthe_graphql_ws, :transport, :init]` — WebSocket upgrade (`Transport.init/1`). Measurements:
+  none. Metadata: shared socket metadata.
+- `[:absinthe_graphql_ws, :transport, :terminate]` — Socket process shutdown
+  (`Transport.terminate/2`). Measurements: `socket_subscription_count`. Metadata: shared socket
+  metadata, `reason`, `subscriptions` (list of `%{id, operation_name}`; `[]` on clean close).
 
 ### `handle_inbound` (client JSON frames)
 
-| Event | When | Measurements | Metadata |
-| --- | --- | --- | --- |
-| `[:absinthe_graphql_ws, :handle_inbound, :connection_init]` | Successful `connection_init` | `socket_subscription_count` (`0`) | Shared socket metadata, `auth_status` |
-| `[:absinthe_graphql_ws, :handle_inbound, :subscribe]` | Subscription registered (or query/mutation `next` reply) | `socket_subscription_count` | Operation metadata |
-| `[:absinthe_graphql_ws, :handle_inbound, :complete, :start]` | Client `complete` frame — start of unsubscribe | `monotonic_time`, `system_time` | Operation metadata, `memory_before`, `message_queue_len_before` |
-| `[:absinthe_graphql_ws, :handle_inbound, :complete, :stop]` | Client `complete` frame — end of unsubscribe (lifecycle counter attaches here) | `duration`, `monotonic_time`, `socket_subscription_count` | Span start metadata plus `memory_after`, `memory_delta`, `message_queue_len_after` |
-| `[:absinthe_graphql_ws, :handle_inbound, :ping]` | Client `ping` frame | `payload_size`, `socket_subscription_count` | Shared socket metadata |
-| `[:absinthe_graphql_ws, :handle_inbound, :error]` | Protocol error before close (e.g. duplicate init, subscribe before init) | — | Shared socket metadata, `code`, `operation`, `reason` |
+- `[:absinthe_graphql_ws, :handle_inbound, :connection_init]` — Successful `connection_init`.
+  Measurements: `socket_subscription_count` (`0`). Metadata: shared socket metadata, `auth_status`.
+- `[:absinthe_graphql_ws, :handle_inbound, :subscribe]` — Subscription registered (or query/mutation
+  `next` reply). Measurements: `socket_subscription_count`. Metadata: operation metadata.
+- `[:absinthe_graphql_ws, :handle_inbound, :complete, :start]` — Client `complete` frame; start of
+  unsubscribe. Measurements: `monotonic_time`, `system_time`. Metadata: operation metadata,
+  `memory_before`, `message_queue_len_before`.
+- `[:absinthe_graphql_ws, :handle_inbound, :complete, :stop]` — Client `complete` frame; end of
+  unsubscribe (lifecycle counter attaches here). Measurements: `duration`, `monotonic_time`,
+  `socket_subscription_count`. Metadata: span start metadata plus `memory_after`, `memory_delta`,
+  `message_queue_len_after`.
+- `[:absinthe_graphql_ws, :handle_inbound, :ping]` — Client `ping` frame. Measurements:
+  `payload_size`, `socket_subscription_count`. Metadata: shared socket metadata.
+- `[:absinthe_graphql_ws, :handle_inbound, :error]` — Protocol error before close (e.g. duplicate
+  init, subscribe before init). Measurements: none. Metadata: shared socket metadata, `code`,
+  `operation`, `reason`.
 
 ### `handle_info` (internal messages)
 
-| Event | When | Measurements | Metadata |
-| --- | --- | --- | --- |
-| `[:absinthe_graphql_ws, :handle_info, :broadcast]` | Subscription publish to client | `payload_size` | Shared socket metadata, `payload`, `operation_name` |
+- `[:absinthe_graphql_ws, :handle_info, :broadcast]` — Subscription publish to client. Measurements:
+  `payload_size`. Metadata: shared socket metadata, `payload`, `operation_name`.
 
 ### Keepalive (server-side control frames)
 
-| Event | When | Measurements | Metadata |
-| --- | --- | --- | --- |
-| `[:absinthe_graphql_ws, :keepalive, :start]` | Outbound `:ping` scheduled | `system_time` | — |
-| `[:absinthe_graphql_ws, :keepalive, :stop]` | Inbound `:pong` received | `duration` | — |
+- `[:absinthe_graphql_ws, :keepalive, :start]` — Outbound `:ping` scheduled. Measurements:
+  `system_time`. Metadata: none.
+- `[:absinthe_graphql_ws, :keepalive, :stop]` — Inbound `:pong` received. Measurements: `duration`.
+  Metadata: none.
 
 ### Garbage collection (optional, when `gc_interval` assign is set)
 
-| Event | When | Measurements | Metadata |
-| --- | --- | --- | --- |
-| `[:absinthe_graphql_ws, :gc, :start]` | GC span start | `monotonic_time`, `system_time` | `before` (process info map) |
-| `[:absinthe_graphql_ws, :gc, :stop]` | GC span stop | `duration` | `before`, `after` (process info maps) |
+- `[:absinthe_graphql_ws, :gc, :start]` — GC span start. Measurements: `monotonic_time`,
+  `system_time`. Metadata: `before` (process info map).
+- `[:absinthe_graphql_ws, :gc, :stop]` — GC span stop. Measurements: `duration`. Metadata: `before`,
+  `after` (process info maps).
 
 ### Example
 
