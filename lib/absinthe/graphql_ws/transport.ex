@@ -177,13 +177,6 @@ defmodule Absinthe.GraphqlWS.Transport do
     :telemetry.execute([:absinthe_graphql_ws, :transport, :terminate], measurements, metadata)
   end
 
-  @doc false
-  @spec emit_transport_init(socket()) :: :ok
-  def emit_transport_init(socket) do
-    :telemetry.execute([:absinthe_graphql_ws, :transport, :init], %{}, socket_metadata(socket))
-    :ok
-  end
-
   @doc """
   Callbacks for parsed JSON payloads coming in from a client.
 
