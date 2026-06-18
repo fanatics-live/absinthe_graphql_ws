@@ -61,7 +61,50 @@ defmodule Absinthe.GraphqlWS.TransportTelemetryTest do
 
     assert terminate_measurements == %{socket_subscription_count: 0}
     assert terminate_metadata.platform == "unknown"
+    assert terminate_metadata.subscriptions == []
     assert is_atom(terminate_metadata.reason) or is_binary(terminate_metadata.reason)
     refute Map.has_key?(terminate_metadata, :socket_subscription_count)
+  end
+
+  test "includes orphaned subscriptions in transport terminate metadata" do
+    assert {:ok, client} = Test.Client.start()
+
+    assert_receive {:telemetry, :init, _, _, _}
+
+    :ok = Test.Client.push(client, %{type: "connection_init"})
+    assert {:ok, [{:text, _}]} = Test.Client.get_new_replies(client)
+
+    id = "orphaned-subscription"
+
+    :ok =
+      Test.Client.push(client, %{
+        id: id,
+        type: "subscribe",
+        payload: %{
+          query: """
+          subscription ThingChanges($id: Int!) {
+            thing_changes(id: $id) {
+              id
+              name
+            }
+          }
+          """,
+          variables: %{id: 2}
+        }
+      })
+
+    assert {:ok, []} = Test.Client.get_new_replies(client)
+
+    :ok = Test.Client.close(client)
+
+    assert_receive {
+      :telemetry,
+      :terminate,
+      [:absinthe_graphql_ws, :transport, :terminate],
+      %{socket_subscription_count: 1},
+      terminate_metadata
+    }
+
+    assert [%{id: ^id, operation_name: nil}] = terminate_metadata.subscriptions
   end
 end
