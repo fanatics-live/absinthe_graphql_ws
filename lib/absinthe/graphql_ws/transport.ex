@@ -338,7 +338,7 @@ defmodule Absinthe.GraphqlWS.Transport do
       socket,
       id,
       operation_name,
-      metadata: %{socket_subscription_count: map_size(socket.subscriptions)}
+      measurements: %{socket_subscription_count: map_size(socket.subscriptions)}
     )
   end
 
@@ -393,13 +393,11 @@ defmodule Absinthe.GraphqlWS.Transport do
   defp unsubscribe_topic_with_telemetry(socket, topic, id, operation_name) do
     memory_before = process_memory()
     message_queue_len_before = process_message_queue_len()
-    socket_subscription_count = map_size(socket.subscriptions)
 
     start_metadata =
       socket
       |> operation_metadata(id, operation_name)
       |> Map.merge(%{
-        socket_subscription_count: socket_subscription_count,
         memory_before: memory_before,
         message_queue_len_before: message_queue_len_before
       })

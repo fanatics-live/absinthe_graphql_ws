@@ -74,7 +74,7 @@ defmodule Absinthe.GraphqlWS.CompleteTelemetryTest do
     assert Map.has_key?(start_measurements, :system_time)
 
     assert start_metadata.id == id
-    assert start_metadata.socket_subscription_count == 1
+    refute Map.has_key?(start_metadata, :socket_subscription_count)
     assert is_integer(start_metadata.memory_before)
     assert is_integer(start_metadata.message_queue_len_before)
 
@@ -84,7 +84,7 @@ defmodule Absinthe.GraphqlWS.CompleteTelemetryTest do
     assert is_integer(stop_measurements.duration)
 
     assert stop_metadata.id == id
-    assert stop_metadata.socket_subscription_count == 1
+    refute Map.has_key?(stop_metadata, :socket_subscription_count)
     assert is_integer(stop_metadata.memory_before)
     assert is_integer(stop_metadata.memory_after)
     assert is_integer(stop_metadata.memory_delta)
@@ -94,8 +94,8 @@ defmodule Absinthe.GraphqlWS.CompleteTelemetryTest do
 
     assert_receive {:telemetry, :execute, [:absinthe_graphql_ws, :handle_inbound, :complete], execute_measurements, execute_metadata}
 
-    assert execute_measurements == %{}
+    assert execute_measurements == %{socket_subscription_count: 1}
     assert execute_metadata.id == id
-    assert execute_metadata.socket_subscription_count == 1
+    refute Map.has_key?(execute_metadata, :socket_subscription_count)
   end
 end
