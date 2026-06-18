@@ -291,12 +291,12 @@ defmodule Absinthe.GraphqlWS.Transport do
     end
   end
 
-  defp tap_subscribe_success({:ok, _socket} = result, socket, id, operation_name) do
+  defp tap_subscribe_success({:ok, socket} = result, _socket, id, operation_name) do
     emit_subscribe_success(socket, id, operation_name)
     result
   end
 
-  defp tap_subscribe_success({:reply, :ok, {:text, message}, _socket} = result, socket, id, operation_name) do
+  defp tap_subscribe_success({:reply, :ok, {:text, message}, socket} = result, _socket, id, operation_name) do
     case Util.json_library().decode(message) do
       {:ok, %{"type" => "next"}} ->
         emit_subscribe_success(socket, id, operation_name)
@@ -323,7 +323,13 @@ defmodule Absinthe.GraphqlWS.Transport do
   end
 
   defp emit_subscribe_success(socket, id, operation_name) do
-    emit_operation_telemetry([:absinthe_graphql_ws, :handle_inbound, :subscribe], socket, id, operation_name)
+    emit_operation_telemetry(
+      [:absinthe_graphql_ws, :handle_inbound, :subscribe],
+      socket,
+      id,
+      operation_name,
+      measurements: %{socket_subscription_count: map_size(socket.subscriptions)}
+    )
   end
 
   defp emit_complete_success(socket, id, operation_name) do
@@ -332,7 +338,7 @@ defmodule Absinthe.GraphqlWS.Transport do
       socket,
       id,
       operation_name,
-      %{socket_subscription_count: map_size(socket.subscriptions)}
+      metadata: %{socket_subscription_count: map_size(socket.subscriptions)}
     )
   end
 
@@ -357,13 +363,16 @@ defmodule Absinthe.GraphqlWS.Transport do
     :telemetry.execute([:absinthe_graphql_ws, :terminate, :complete], measurements, metadata)
   end
 
-  defp emit_operation_telemetry(event, socket, id, operation_name, extra \\ %{}) do
+  defp emit_operation_telemetry(event, socket, id, operation_name, opts \\ []) do
+    extra_metadata = Keyword.get(opts, :metadata, %{})
+    measurements = Keyword.get(opts, :measurements, %{})
+
     metadata =
       socket
       |> operation_metadata(id, operation_name)
-      |> Map.merge(extra)
+      |> Map.merge(extra_metadata)
 
-    :telemetry.execute(event, %{}, metadata)
+    :telemetry.execute(event, measurements, metadata)
   end
 
   defp socket_metadata(socket) do
