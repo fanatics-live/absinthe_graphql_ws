@@ -140,9 +140,8 @@ Operation-scoped events also include `id` (GraphQL-WS message id) and `operation
 | --- | --- | --- | --- |
 | `[:absinthe_graphql_ws, :handle_inbound, :connection_init]` | Successful `connection_init` | `socket_subscription_count` (`0`) | Shared socket metadata, `auth_status` |
 | `[:absinthe_graphql_ws, :handle_inbound, :subscribe]` | Subscription registered (or query/mutation `next` reply) | `socket_subscription_count` | Operation metadata |
-| `[:absinthe_graphql_ws, :handle_inbound, :complete]` | Client `complete` frame (lifecycle counter) | `socket_subscription_count` | Operation metadata |
-| `[:absinthe_graphql_ws, :handle_inbound, :complete, :start]` | Start of unsubscribe work (span) | `monotonic_time`, `system_time` | Operation metadata, `memory_before`, `message_queue_len_before` |
-| `[:absinthe_graphql_ws, :handle_inbound, :complete, :stop]` | End of unsubscribe work (span) | `duration` | Span start metadata plus `memory_after`, `memory_delta`, `message_queue_len_after` |
+| `[:absinthe_graphql_ws, :handle_inbound, :complete, :start]` | Client `complete` frame — start of unsubscribe | `monotonic_time`, `system_time` | Operation metadata, `memory_before`, `message_queue_len_before` |
+| `[:absinthe_graphql_ws, :handle_inbound, :complete, :stop]` | Client `complete` frame — end of unsubscribe (lifecycle counter attaches here) | `duration`, `monotonic_time`, `socket_subscription_count` | Span start metadata plus `memory_after`, `memory_delta`, `message_queue_len_after` |
 | `[:absinthe_graphql_ws, :handle_inbound, :ping]` | Client `ping` frame | `payload_size`, `socket_subscription_count` | Shared socket metadata |
 | `[:absinthe_graphql_ws, :handle_inbound, :error]` | Protocol error before close (e.g. duplicate init, subscribe before init) | — | Shared socket metadata, `code`, `operation`, `reason` |
 

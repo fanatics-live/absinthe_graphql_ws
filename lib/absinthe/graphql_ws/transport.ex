@@ -202,7 +202,6 @@ defmodule Absinthe.GraphqlWS.Transport do
       {:ok, topic, operation_name} ->
         debug("unsubscribing from topic #{topic}")
         unsubscribe_topic_with_telemetry(socket, topic, id, operation_name)
-        emit_complete_telemetry(socket, id, operation_name)
 
         {:ok, %{socket | subscriptions: Map.delete(socket.subscriptions, topic)}}
 
@@ -372,16 +371,6 @@ defmodule Absinthe.GraphqlWS.Transport do
     )
   end
 
-  defp emit_complete_telemetry(socket, id, operation_name) do
-    emit_operation_telemetry(
-      [:absinthe_graphql_ws, :handle_inbound, :complete],
-      socket,
-      id,
-      operation_name,
-      measurements: %{socket_subscription_count: map_size(socket.subscriptions)}
-    )
-  end
-
   defp emit_operation_telemetry(event, socket, id, operation_name, opts) do
     extra_metadata = Keyword.get(opts, :metadata, %{})
     measurements = Keyword.get(opts, :measurements, %{})
@@ -412,6 +401,9 @@ defmodule Absinthe.GraphqlWS.Transport do
   defp unsubscribe_topic_with_telemetry(socket, topic, id, operation_name) do
     memory_before = process_memory()
     message_queue_len_before = process_message_queue_len()
+    socket_subscription_count = map_size(socket.subscriptions)
+    start_mono = System.monotonic_time()
+    start_system_time = System.system_time()
 
     start_metadata =
       socket
@@ -421,22 +413,35 @@ defmodule Absinthe.GraphqlWS.Transport do
         message_queue_len_before: message_queue_len_before
       })
 
-    :telemetry.span([:absinthe_graphql_ws, :handle_inbound, :complete], start_metadata, fn ->
-      unsubscribe_topic(socket, topic)
+    :telemetry.execute(
+      [:absinthe_graphql_ws, :handle_inbound, :complete, :start],
+      %{monotonic_time: start_mono, system_time: start_system_time},
+      start_metadata
+    )
 
-      memory_after = process_memory()
-      message_queue_len_after = process_message_queue_len()
+    unsubscribe_topic(socket, topic)
 
-      stop_metadata =
-        start_metadata
-        |> Map.merge(%{
-          memory_after: memory_after,
-          memory_delta: memory_after - memory_before,
-          message_queue_len_after: message_queue_len_after
-        })
+    memory_after = process_memory()
+    message_queue_len_after = process_message_queue_len()
+    stop_mono = System.monotonic_time()
 
-      {:ok, stop_metadata}
-    end)
+    stop_metadata =
+      start_metadata
+      |> Map.merge(%{
+        memory_after: memory_after,
+        memory_delta: memory_after - memory_before,
+        message_queue_len_after: message_queue_len_after
+      })
+
+    :telemetry.execute(
+      [:absinthe_graphql_ws, :handle_inbound, :complete, :stop],
+      %{
+        duration: stop_mono - start_mono,
+        monotonic_time: stop_mono,
+        socket_subscription_count: socket_subscription_count
+      },
+      stop_metadata
+    )
   end
 
   defp unsubscribe_topic(socket, topic) do
