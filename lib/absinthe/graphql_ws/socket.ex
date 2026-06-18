@@ -238,12 +238,7 @@ defmodule Absinthe.GraphqlWS.Socket do
 
       @doc false
       @impl Phoenix.Socket.Transport
-      def init(socket) do
-        if socket.keepalive > 0,
-          do: Process.send_after(self(), :keepalive, socket.keepalive)
-
-        {:ok, socket}
-      end
+      def init(socket), do: Absinthe.GraphqlWS.Transport.init(socket)
 
       @doc false
       @impl Phoenix.Socket.Transport

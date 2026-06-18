@@ -37,9 +37,7 @@ defmodule Absinthe.GraphqlWS.Transport do
 
   def handle_control({_, opcode: :pong}, socket) do
     start = socket.assigns[:start]
-    measurements = %{duration: System.monotonic_time() - start}
-    metadata = %{}
-    :telemetry.execute([:absinthe_graphql_ws, :keepalive, :stop], measurements, metadata)
+    emit_keepalive_stop_telemetry(System.monotonic_time() - start)
     system_time = System.system_time()
     socket = Util.assign(socket, last_inbound_pong: system_time, last_keepalive: system_time)
 
@@ -95,9 +93,7 @@ defmodule Absinthe.GraphqlWS.Transport do
   def handle_info(:keepalive, socket) do
     Process.send_after(self(), :keepalive, socket.keepalive)
     start = System.monotonic_time()
-    measurements = %{system_time: System.system_time()}
-    metadata = %{}
-    :telemetry.execute([:absinthe_graphql_ws, :keepalive, :start], measurements, metadata)
+    emit_keepalive_start_telemetry()
     system_time = System.system_time()
     socket = Util.assign(socket, start: start, last_outbound_ping: system_time, last_keepalive: system_time)
 
@@ -105,15 +101,7 @@ defmodule Absinthe.GraphqlWS.Transport do
   end
 
   def handle_info(:gc, socket) do
-    before_info = Process.info(self()) |> Map.new()
-
-    :telemetry.span([:absinthe_graphql_ws, :gc], %{before: before_info}, fn ->
-      :erlang.garbage_collect()
-      after_info = Process.info(self()) |> Map.new()
-
-      {:ok, %{before: before_info, after: after_info}}
-    end)
-
+    emit_gc_telemetry()
     maybe_schedule_gc(socket)
 
     {:ok, socket}
@@ -122,18 +110,7 @@ defmodule Absinthe.GraphqlWS.Transport do
   def handle_info(%Broadcast{event: "subscription:data", payload: payload, topic: topic}, socket) do
     {subscription_id, operation_name} = subscription_info(socket.subscriptions, topic)
     message = Message.Next.new(subscription_id, payload.result)
-    measurements = %{payload_size: byte_size(message)}
-
-    metadata = %{
-      platform: get_platform(socket),
-      session_id: get_session_id(socket),
-      client_app_version: get_client_app_version(socket),
-      user_id: get_user_id(socket),
-      payload: payload,
-      operation_name: operation_name
-    }
-
-    :telemetry.execute([:absinthe_graphql_ws, :handle_info, :broadcast], measurements, metadata)
+    emit_broadcast_telemetry(socket, operation_name, payload, message)
 
     {:push, {:text, message}, socket}
   end
@@ -156,12 +133,19 @@ defmodule Absinthe.GraphqlWS.Transport do
   @spec terminate(term(), socket()) :: :ok
   def terminate(reason, socket) do
     debug("terminated: #{inspect(reason)}")
-
-    if map_size(socket.subscriptions) > 0 do
-      emit_terminate_telemetry(socket, reason)
-    end
-
+    emit_transport_terminate_telemetry(reason, socket)
     :ok
+  end
+
+  @doc false
+  @spec init(socket()) :: {:ok, socket()}
+  def init(socket) do
+    emit_transport_init_telemetry(socket)
+
+    if socket.keepalive > 0,
+      do: Process.send_after(self(), :keepalive, socket.keepalive)
+
+    {:ok, socket}
   end
 
   @doc """
@@ -172,15 +156,7 @@ defmodule Absinthe.GraphqlWS.Transport do
   """
   @spec handle_inbound(map(), socket()) :: reply_inbound()
   def handle_inbound(%{"type" => "connection_init"}, %{initialized?: true} = socket) do
-    metadata = %{
-      code: 4429,
-      operation: :connection_init,
-      reason: :too_many_initialisation_requests,
-      platform: get_platform(socket)
-    }
-
-    :telemetry.execute([:absinthe_graphql_ws, :handle_inbound, :error], %{}, metadata)
-
+    emit_handle_inbound_error_telemetry(socket, 4429, :connection_init, :too_many_initialisation_requests)
     close(4429, "Too many initialisation requests", socket)
   end
 
@@ -190,6 +166,7 @@ defmodule Absinthe.GraphqlWS.Transport do
         {:ok, payload, socket} ->
           socket = %{socket | initialized?: true}
           maybe_schedule_gc(socket)
+          emit_connection_init_telemetry(socket)
           {:reply, :ok, {:text, Message.ConnectionAck.new(payload)}, socket}
 
         {:error, payload, socket} ->
@@ -198,20 +175,13 @@ defmodule Absinthe.GraphqlWS.Transport do
     else
       socket = %{socket | initialized?: true}
       maybe_schedule_gc(socket)
+      emit_connection_init_telemetry(socket)
       {:reply, :ok, {:text, Message.ConnectionAck.new()}, socket}
     end
   end
 
   def handle_inbound(%{"type" => "subscribe"}, %{initialized?: false} = socket) do
-    metadata = %{
-      code: 4400,
-      operation: :subscribe,
-      reason: :subscribe_before_connection_init,
-      platform: get_platform(socket)
-    }
-
-    :telemetry.execute([:absinthe_graphql_ws, :handle_inbound, :error], %{}, metadata)
-
+    emit_handle_inbound_error_telemetry(socket, 4400, :subscribe, :subscribe_before_connection_init)
     close(4400, "Subscribe message received before ConnectionInit", socket)
   end
 
@@ -232,7 +202,6 @@ defmodule Absinthe.GraphqlWS.Transport do
       {:ok, topic, operation_name} ->
         debug("unsubscribing from topic #{topic}")
         unsubscribe_topic_with_telemetry(socket, topic, id, operation_name)
-        emit_complete_success(socket, id, operation_name)
 
         {:ok, %{socket | subscriptions: Map.delete(socket.subscriptions, topic)}}
 
@@ -244,9 +213,7 @@ defmodule Absinthe.GraphqlWS.Transport do
   def handle_inbound(%{"type" => "ping"}, socket) do
     system_time = System.system_time()
     message = Message.Pong.new()
-    measurements = %{payload_size: byte_size(message)}
-    metadata = %{platform: get_platform(socket)}
-    :telemetry.execute([:absinthe_graphql_ws, :handle_inbound, :ping], measurements, metadata)
+    emit_handle_inbound_ping_telemetry(socket, message)
 
     socket = Util.assign(socket, last_inbound_ping: system_time, last_keepalive: system_time)
     {:reply, :ok, {:text, message}, socket}
@@ -289,15 +256,15 @@ defmodule Absinthe.GraphqlWS.Transport do
     end
   end
 
-  defp tap_subscribe_success({:ok, _socket} = result, socket, id, operation_name) do
-    emit_subscribe_success(socket, id, operation_name)
+  defp tap_subscribe_success({:ok, socket} = result, _socket, id, operation_name) do
+    emit_subscribe_telemetry(socket, id, operation_name)
     result
   end
 
-  defp tap_subscribe_success({:reply, :ok, {:text, message}, _socket} = result, socket, id, operation_name) do
+  defp tap_subscribe_success({:reply, :ok, {:text, message}, socket} = result, _socket, id, operation_name) do
     case Util.json_library().decode(message) do
       {:ok, %{"type" => "next"}} ->
-        emit_subscribe_success(socket, id, operation_name)
+        emit_subscribe_telemetry(socket, id, operation_name)
 
       _ ->
         :ok
@@ -308,91 +275,173 @@ defmodule Absinthe.GraphqlWS.Transport do
 
   defp tap_subscribe_success(result, _socket, _id, _operation_name), do: result
 
-  defp emit_subscribe_success(socket, id, operation_name) do
-    emit_operation_telemetry([:absinthe_graphql_ws, :handle_inbound, :subscribe], socket, id, operation_name)
+  defp emit_transport_init_telemetry(socket) do
+    :telemetry.execute([:absinthe_graphql_ws, :transport, :init], %{}, socket_metadata(socket))
   end
 
-  defp emit_complete_success(socket, id, operation_name) do
-    emit_operation_telemetry(
-      [:absinthe_graphql_ws, :handle_inbound, :complete],
-      socket,
-      id,
-      operation_name,
-      %{socket_subscription_count: map_size(socket.subscriptions)}
-    )
-  end
-
-  defp emit_terminate_telemetry(socket, reason) do
+  defp emit_transport_terminate_telemetry(reason, socket) do
     subscriptions =
       Enum.map(socket.subscriptions, fn {topic, _} ->
         {id, operation_name} = subscription_info(socket.subscriptions, topic)
         %{id: id, operation_name: operation_name}
       end)
 
-    metadata = %{
-      platform: get_platform(socket),
-      session_id: get_session_id(socket),
-      client_app_version: get_client_app_version(socket),
-      user_id: get_user_id(socket),
-      reason: reason,
-      subscriptions: subscriptions
-    }
+    metadata =
+      socket_metadata(socket)
+      |> Map.merge(%{reason: reason, subscriptions: subscriptions})
 
-    measurements = %{subscription_count: length(subscriptions)}
+    measurements = %{socket_subscription_count: map_size(socket.subscriptions)}
 
-    :telemetry.execute([:absinthe_graphql_ws, :terminate, :complete], measurements, metadata)
+    :telemetry.execute([:absinthe_graphql_ws, :transport, :terminate], measurements, metadata)
   end
 
-  defp emit_operation_telemetry(event, socket, id, operation_name, extra \\ %{}) do
+  defp emit_keepalive_start_telemetry do
+    :telemetry.execute(
+      [:absinthe_graphql_ws, :keepalive, :start],
+      %{system_time: System.system_time()},
+      %{}
+    )
+  end
+
+  defp emit_keepalive_stop_telemetry(duration) do
+    :telemetry.execute([:absinthe_graphql_ws, :keepalive, :stop], %{duration: duration}, %{})
+  end
+
+  defp emit_gc_telemetry do
+    before_info = Process.info(self()) |> Map.new()
+
+    :telemetry.span([:absinthe_graphql_ws, :gc], %{before: before_info}, fn ->
+      :erlang.garbage_collect()
+      after_info = Process.info(self()) |> Map.new()
+
+      {:ok, %{before: before_info, after: after_info}}
+    end)
+  end
+
+  defp emit_broadcast_telemetry(socket, operation_name, payload, message) do
+    metadata =
+      socket_metadata(socket)
+      |> Map.merge(%{payload: payload, operation_name: operation_name})
+
+    measurements = %{payload_size: byte_size(message)}
+
+    :telemetry.execute([:absinthe_graphql_ws, :handle_info, :broadcast], measurements, metadata)
+  end
+
+  defp emit_handle_inbound_error_telemetry(socket, code, operation, reason) do
+    metadata =
+      socket_metadata(socket)
+      |> Map.merge(%{code: code, operation: operation, reason: reason})
+
+    :telemetry.execute([:absinthe_graphql_ws, :handle_inbound, :error], %{}, metadata)
+  end
+
+  defp emit_connection_init_telemetry(socket) do
+    metadata =
+      socket_metadata(socket)
+      |> Map.put(:auth_status, socket.assigns[:auth_status])
+
+    :telemetry.execute(
+      [:absinthe_graphql_ws, :handle_inbound, :connection_init],
+      %{socket_subscription_count: 0},
+      metadata
+    )
+  end
+
+  defp emit_handle_inbound_ping_telemetry(socket, message) do
+    measurements = %{
+      payload_size: byte_size(message),
+      socket_subscription_count: map_size(socket.subscriptions)
+    }
+
+    :telemetry.execute(
+      [:absinthe_graphql_ws, :handle_inbound, :ping],
+      measurements,
+      socket_metadata(socket)
+    )
+  end
+
+  defp emit_subscribe_telemetry(socket, id, operation_name) do
+    emit_operation_telemetry(
+      [:absinthe_graphql_ws, :handle_inbound, :subscribe],
+      socket,
+      id,
+      operation_name,
+      measurements: %{socket_subscription_count: map_size(socket.subscriptions)}
+    )
+  end
+
+  defp emit_operation_telemetry(event, socket, id, operation_name, opts) do
+    extra_metadata = Keyword.get(opts, :metadata, %{})
+    measurements = Keyword.get(opts, :measurements, %{})
+
     metadata =
       socket
       |> operation_metadata(id, operation_name)
-      |> Map.merge(extra)
+      |> Map.merge(extra_metadata)
 
-    :telemetry.execute(event, %{}, metadata)
+    :telemetry.execute(event, measurements, metadata)
   end
 
-  defp operation_metadata(socket, id, operation_name) do
+  defp socket_metadata(socket) do
     %{
       platform: get_platform(socket),
       session_id: get_session_id(socket),
       client_app_version: get_client_app_version(socket),
-      user_id: get_user_id(socket),
-      id: id,
-      operation_name: operation_name
+      user_id: get_user_id(socket)
     }
+  end
+
+  defp operation_metadata(socket, id, operation_name) do
+    socket
+    |> socket_metadata()
+    |> Map.merge(%{id: id, operation_name: operation_name})
   end
 
   defp unsubscribe_topic_with_telemetry(socket, topic, id, operation_name) do
     memory_before = process_memory()
     message_queue_len_before = process_message_queue_len()
     socket_subscription_count = map_size(socket.subscriptions)
+    start_mono = System.monotonic_time()
+    start_system_time = System.system_time()
 
     start_metadata =
       socket
       |> operation_metadata(id, operation_name)
       |> Map.merge(%{
-        socket_subscription_count: socket_subscription_count,
         memory_before: memory_before,
         message_queue_len_before: message_queue_len_before
       })
 
-    :telemetry.span([:absinthe_graphql_ws, :handle_inbound, :complete], start_metadata, fn ->
-      unsubscribe_topic(socket, topic)
+    :telemetry.execute(
+      [:absinthe_graphql_ws, :handle_inbound, :complete, :start],
+      %{monotonic_time: start_mono, system_time: start_system_time},
+      start_metadata
+    )
 
-      memory_after = process_memory()
-      message_queue_len_after = process_message_queue_len()
+    unsubscribe_topic(socket, topic)
 
-      stop_metadata =
-        start_metadata
-        |> Map.merge(%{
-          memory_after: memory_after,
-          memory_delta: memory_after - memory_before,
-          message_queue_len_after: message_queue_len_after
-        })
+    memory_after = process_memory()
+    message_queue_len_after = process_message_queue_len()
+    stop_mono = System.monotonic_time()
 
-      {:ok, stop_metadata}
-    end)
+    stop_metadata =
+      start_metadata
+      |> Map.merge(%{
+        memory_after: memory_after,
+        memory_delta: memory_after - memory_before,
+        message_queue_len_after: message_queue_len_after
+      })
+
+    :telemetry.execute(
+      [:absinthe_graphql_ws, :handle_inbound, :complete, :stop],
+      %{
+        duration: stop_mono - start_mono,
+        monotonic_time: stop_mono,
+        socket_subscription_count: socket_subscription_count
+      },
+      stop_metadata
+    )
   end
 
   defp unsubscribe_topic(socket, topic) do
