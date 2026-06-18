@@ -168,7 +168,8 @@ defmodule Absinthe.GraphqlWS.Transport do
       end)
 
     metadata =
-      socket_metadata(socket)
+      socket
+      |> socket_metadata()
       |> Map.merge(%{reason: reason, subscriptions: subscriptions})
 
     measurements = %{socket_subscription_count: map_size(socket.subscriptions)}
@@ -361,7 +362,7 @@ defmodule Absinthe.GraphqlWS.Transport do
     )
   end
 
-  defp emit_operation_telemetry(event, socket, id, operation_name, opts \\ []) do
+  defp emit_operation_telemetry(event, socket, id, operation_name, opts) do
     extra_metadata = Keyword.get(opts, :metadata, %{})
     measurements = Keyword.get(opts, :measurements, %{})
 
