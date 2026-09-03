@@ -194,6 +194,18 @@ defmodule Absinthe.GraphqlWS.Transport do
 
         {:error, payload, socket} ->
           {:reply, :ok, {:text, Message.Error.new(payload)}, socket}
+
+        {:close, {code, message}, socket} when is_integer(code) and is_binary(message) ->
+          metadata = %{
+            code: code,
+            operation: :connection_init,
+            reason: :rejected_by_handler,
+            platform: get_platform(socket)
+          }
+
+          :telemetry.execute([:absinthe_graphql_ws, :handle_inbound, :error], %{}, metadata)
+
+          close(code, message, socket)
       end
     else
       socket = %{socket | initialized?: true}
