@@ -5,10 +5,12 @@ defmodule Test.Site do
   @port 29_876
   @heap_guard_socket "/graphql_heap_guard"
   @heap_guard_max_heap_size_bytes 1_048_576
+  @reject_socket "/graphql_reject"
   def host, do: @host
   def port, do: @port
   def heap_guard_socket, do: @heap_guard_socket
   def heap_guard_max_heap_size_bytes, do: @heap_guard_max_heap_size_bytes
+  def reject_socket, do: @reject_socket
 
   defmodule GraphSocket do
     use Absinthe.GraphqlWS.Socket, schema: Test.Site.Schema
@@ -31,6 +33,15 @@ defmodule Test.Site do
       Test.Site.TestPubSub.notify(:max_heap_size, {:max_heap_size, max_heap_size})
 
       {:ok, %{}, socket}
+    end
+  end
+
+  defmodule RejectSocket do
+    use Absinthe.GraphqlWS.Socket, schema: Test.Site.Schema
+
+    @impl Absinthe.GraphqlWS.Socket
+    def handle_init(_payload, socket) do
+      {:close, {4403, "Forbidden"}, socket}
     end
   end
 
@@ -205,6 +216,14 @@ defmodule Test.Site do
 
     socket @heap_guard_socket,
            Test.Site.HeapGuardSocket,
+           websocket: [
+             connect_info: [:peer_data, :trace_context_headers, :x_headers, :uri, :user_agent],
+             path: "",
+             subprotocols: ["graphql-transport-ws"]
+           ]
+
+    socket "/graphql_reject",
+           Test.Site.RejectSocket,
            websocket: [
              connect_info: [:peer_data, :trace_context_headers, :x_headers, :uri, :user_agent],
              path: "",
