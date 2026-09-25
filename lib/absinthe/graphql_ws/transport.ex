@@ -132,7 +132,7 @@ defmodule Absinthe.GraphqlWS.Transport do
 
   def handle_info(%Broadcast{event: "subscription:data", payload: payload, topic: topic}, socket) do
     {subscription_id, operation_name} = subscription_info(socket.subscriptions, topic)
-    message = Message.Next.new(subscription_id, payload.result)
+    message = encode(:next, socket, subscription_id, operation_name, fn -> Message.Next.new(subscription_id, payload.result) end)
     measurements = %{payload_size: byte_size(message)}
 
     metadata = %{
@@ -392,6 +392,18 @@ defmodule Absinthe.GraphqlWS.Transport do
     }
   end
 
+  # Emits `[:absinthe_graphql_ws, :encode, :start | :stop | :exception]` around JSON encoding
+  # of an outgoing message. `:stop` measurements include `:duration` (native units) and
+  # `:byte_size` of the encoded message.
+  defp encode(type, socket, id, operation_name, fun) do
+    metadata = socket |> operation_metadata(id, operation_name) |> Map.put(:type, type)
+
+    :telemetry.span([:absinthe_graphql_ws, :encode], metadata, fn ->
+      message = fun.()
+      {message, %{byte_size: byte_size(message)}, metadata}
+    end)
+  end
+
   defp unsubscribe_topic_with_telemetry(socket, topic, id, operation_name) do
     memory_before = process_memory()
     message_queue_len_before = process_message_queue_len()
@@ -491,14 +503,17 @@ defmodule Absinthe.GraphqlWS.Transport do
       {:ok, %{data: _} = reply, context} ->
         queue_complete_message(id)
         socket = merge_opts(socket, context: context)
-        {:reply, :ok, {:text, Message.Next.new(id, reply)}, socket}
+        message = encode(:next, socket, id, operation_name, fn -> Message.Next.new(id, reply) end)
+        {:reply, :ok, {:text, message}, socket}
 
       {:ok, %{errors: errors}, context} ->
         socket = merge_opts(socket, context: context)
-        {:reply, :ok, {:text, Message.Error.new(id, errors)}, socket}
+        message = encode(:error, socket, id, operation_name, fn -> Message.Error.new(id, errors) end)
+        {:reply, :ok, {:text, message}, socket}
 
       {:error, reply} ->
-        {:reply, :error, {:text, Message.Error.new(id, reply)}, socket}
+        message = encode(:error, socket, id, operation_name, fn -> Message.Error.new(id, reply) end)
+        {:reply, :error, {:text, message}, socket}
     end
   end
 

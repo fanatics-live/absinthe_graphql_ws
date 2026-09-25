@@ -2,6 +2,10 @@
 
 ## Unpublished
 
+- Emit `[:absinthe_graphql_ws, :encode, :start | :stop | :exception]` telemetry span around JSON
+  encoding of outgoing `next`/`error` messages. `:stop` measurements: `:duration`, `:byte_size`.
+  Metadata: `:type`, `:id`, `:operation_name`, `:platform`, `:session_id`, `:client_app_version`, `:user_id`.
+- Require `telemetry ~> 1.4` as a direct dependency.
 - `c:Absinthe.GraphqlWS.Socket.handle_init/2` may return `{:close, {code, message}, socket}` to reject
   a connection by closing the websocket with a `graphql-ws` close code (e.g. `4403`).
 
